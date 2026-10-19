@@ -57,25 +57,65 @@ static void PFDumpMethods(Class cls, NSString *label) {
     free(methods);
 }
 
+static void PFScanControls(UIView *view, NSUInteger depth) {
+    if (!view || depth > 12) return;
+    if ([view isKindOfClass:[UIControl class]]) {
+        UIControl *control = (UIControl *)view;
+        NSMutableArray *actions = [NSMutableArray array];
+        for (id target in control.allTargets) {
+            for (NSString *action in [control actionsForTarget:target forControlEvent:UIControlEventTouchUpInside] ?: @[]) {
+                [actions addObject:[NSString stringWithFormat:@"%@:%@", NSStringFromClass([target class]), action]];
+            }
+        }
+        PFWrite([NSString stringWithFormat:@"v0.9 CONTROL %@ frame=%@ label=%@ actions=%@",
+                 NSStringFromClass([control class]),
+                 NSStringFromCGRect([control convertRect:control.bounds toView:nil]),
+                 control.accessibilityLabel ?: @"", actions]);
+    }
+    for (UIView *child in view.subviews) PFScanControls(child, depth + 1);
+}
+
+static UIControl *PFRestoreControl(UIView *view, NSUInteger depth) {
+    if (!view || depth > 12 || view.hidden || view.alpha < 0.05) return nil;
+    if ([view isKindOfClass:[UIControl class]]) {
+        UIControl *control = (UIControl *)view;
+        for (id target in control.allTargets) {
+            for (NSString *action in [control actionsForTarget:target forControlEvent:UIControlEventTouchUpInside] ?: @[]) {
+                NSString *a = action.lowercaseString;
+                if ([a containsString:@"restore"] || [a containsString:@"returnto"] ||
+                    [a containsString:@"expand"] || [a containsString:@"fullscreen"]) {
+                    PFWrite([NSString stringWithFormat:@"v0.9 matched restore control %@ action=%@", NSStringFromClass([control class]), action]);
+                    return control;
+                }
+            }
+        }
+    }
+    for (UIView *child in view.subviews) {
+        UIControl *found = PFRestoreControl(child, depth + 1);
+        if (found) return found;
+    }
+    return nil;
+}
+
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
-    if (!pip || !pip.view.window) return NO;
-    CGRect bounds = [UIScreen mainScreen].bounds;
-    if (!CGRectEqualToRect(pip.view.frame, bounds)) return NO;
-    NSArray<NSString *> *names = @[@"returnToApplication", @"returnToApp",
-        @"restoreUserInterface", @"returnToAppButtonPressed",
-        @"returnToApplicationButtonPressed", @"handleReturnToAppButtonPressed"];
-    for (NSString *name in names) {
-        SEL sel = NSSelectorFromString(name);
-        if (![pip respondsToSelector:sel]) continue;
-        NSMethodSignature *sig = [pip methodSignatureForSelector:sel];
-        if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, "v") != 0) continue;
-        PFWrite([NSString stringWithFormat:@"v0.8 Home -> %@", name]);
-        ((void (*)(id, SEL))objc_msgSend)(pip, sel);
-        return YES;
+    if (!pip || !pip.view.window) {
+        PFWrite(@"v0.9 Home: no active PiP");
+        return NO;
     }
-    PFWrite(@"v0.8 Home: no verified zero-argument return-to-app selector; using normal Home");
-    return NO;
+    CGRect bounds = [UIScreen mainScreen].bounds;
+    if (!CGRectEqualToRect(pip.view.frame, bounds)) {
+        PFWrite(@"v0.9 Home: PiP not full screen");
+        return NO;
+    }
+    UIControl *button = PFRestoreControl(pip.view, 0);
+    if (!button) {
+        PFWrite(@"v0.9 Home: no restore control found; default Home");
+        return NO;
+    }
+    PFWrite(@"v0.9 Home: triggering native PiP restore button");
+    [button sendActionsForControlEvents:UIControlEventTouchUpInside];
+    return YES;
 }
 
 static void PFInspectWindows(void) {
@@ -118,6 +158,7 @@ static void PFInspectWindows(void) {
         pfActivePiP = controller;
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
+        PFScanControls(controller.view, 0);
     });
 }
 
@@ -140,7 +181,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.8 Home-to-app experiment loaded");
+            PFWrite(@"PiPFullscreen v0.9 native restore button experiment loaded");
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         }
