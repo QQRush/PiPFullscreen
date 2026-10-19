@@ -23,13 +23,16 @@ static void PFSetStatusBarHidden(BOOL hide) {
     Class statusClass = NSClassFromString(@"UIStatusBarWindow");
     if (hide) {
         NSUInteger count = 0;
-        for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             if (!statusClass || ![window isKindOfClass:statusClass]) continue;
             if (![savedStatusWindows objectForKey:window]) {
                 [savedStatusWindows setObject:@(window.hidden) forKey:window];
             }
             window.hidden = YES;
             count++;
+            }
         }
         PFWrite([NSString stringWithFormat:@"v0.6 hide status-bar windows: %lu", (unsigned long)count]);
     } else {
