@@ -1,11 +1,14 @@
 #import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
 #import <stdio.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 
 @interface SBPIPContainerViewController : UIViewController
 - (void)forcePictureInPictureToFrame:(CGRect)frame;
 @end
 
+static __weak SBPIPContainerViewController *pfActivePiP = nil;
 static NSString * const kLogPath = @"/var/mobile/Library/Logs/PiPFullscreen.log";
 
 static void PFWrite(NSString *message) {
@@ -34,6 +37,45 @@ static void PFInspectView(UIView *view, NSUInteger depth, NSUInteger *budget) {
         PFInspectView(child, depth + 1, budget);
         if (*budget == 0) break;
     }
+}
+
+static void PFDumpMethods(Class cls, NSString *label) {
+    if (!cls) { PFWrite([NSString stringWithFormat:@"v0.8 %@ class unavailable", label]); return; }
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    for (unsigned int i = 0; i < count; i++) {
+        NSString *name = NSStringFromSelector(method_getName(methods[i]));
+        NSString *lower = name.lowercaseString;
+        if ([lower containsString:@"return"] || [lower containsString:@"restore"] ||
+            [lower containsString:@"stop"] || [lower containsString:@"home"] ||
+            [lower containsString:@"single"] || [lower containsString:@"tap"] ||
+            [lower containsString:@"button"] || [lower containsString:@"close"]) {
+            PFWrite([NSString stringWithFormat:@"v0.8 METHOD %@ %@ %s", label, name,
+                     method_getTypeEncoding(methods[i])]);
+        }
+    }
+    free(methods);
+}
+
+static BOOL PFReturnToApp(void) {
+    SBPIPContainerViewController *pip = pfActivePiP;
+    if (!pip || !pip.view.window) return NO;
+    CGRect bounds = [UIScreen mainScreen].bounds;
+    if (!CGRectEqualToRect(pip.view.frame, bounds)) return NO;
+    NSArray<NSString *> *names = @[@"returnToApplication", @"returnToApp",
+        @"restoreUserInterface", @"returnToAppButtonPressed",
+        @"returnToApplicationButtonPressed", @"handleReturnToAppButtonPressed"];
+    for (NSString *name in names) {
+        SEL sel = NSSelectorFromString(name);
+        if (![pip respondsToSelector:sel]) continue;
+        NSMethodSignature *sig = [pip methodSignatureForSelector:sel];
+        if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, "v") != 0) continue;
+        PFWrite([NSString stringWithFormat:@"v0.8 Home -> %@", name]);
+        ((void (*)(id, SEL))objc_msgSend)(pip, sel);
+        return YES;
+    }
+    PFWrite(@"v0.8 Home: no verified zero-argument return-to-app selector; using normal Home");
+    return NO;
 }
 
 static void PFInspectWindows(void) {
@@ -73,8 +115,24 @@ static void PFInspectWindows(void) {
         PFWrite([NSString stringWithFormat:@"v0.7 forcing PiP frame %@", NSStringFromCGRect(screen)]);
         [controller forcePictureInPictureToFrame:screen];
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
+        pfActivePiP = controller;
         PFInspectWindows();
+        PFDumpMethods([controller class], @"PiPContainer");
     });
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    %orig;
+    if (pfActivePiP == self) pfActivePiP = nil;
+}
+
+%end
+
+%hook SBHomeHardwareButtonActions
+
+- (void)performSinglePressUp {
+    if (PFReturnToApp()) return;
+    %orig;
 }
 
 %end
@@ -82,7 +140,8 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.7 status diagnostic loaded");
+            PFWrite(@"PiPFullscreen v0.8 Home-to-app experiment loaded");
+            PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         }
     }
