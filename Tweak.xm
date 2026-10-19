@@ -75,48 +75,6 @@ static void PFScanControls(UIView *view, NSUInteger depth) {
     for (UIView *child in view.subviews) PFScanControls(child, depth + 1);
 }
 
-static NSMapTable<UIView *, NSNumber *> *pfStatusViews;
-
-static void PFStatusViewsInTree(UIView *view, BOOL hide, NSUInteger depth, NSUInteger *count) {
-    if (!view || depth > 10) return;
-    NSString *name = NSStringFromClass([view class]);
-    if ([name isEqualToString:@"UIStatusBar_Modern"]) {
-        if (hide) {
-            if (![pfStatusViews objectForKey:view]) {
-                [pfStatusViews setObject:@(view.hidden) forKey:view];
-            }
-            view.hidden = YES;
-            (*count)++;
-            PFWrite([NSString stringWithFormat:@"v0.10 status view hidden class=%@ window=%@",
-                     name, NSStringFromClass([view.window class])]);
-        }
-        return;
-    }
-    for (UIView *child in view.subviews) PFStatusViewsInTree(child, hide, depth + 1, count);
-}
-
-static void PFSetStatusHidden(BOOL hide) {
-    if (!pfStatusViews) pfStatusViews = [NSMapTable weakToStrongObjectsMapTable];
-    if (hide) {
-        NSUInteger count = 0;
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-                PFStatusViewsInTree(window, YES, 0, &count);
-            }
-        }
-        PFWrite([NSString stringWithFormat:@"v0.10 status views hidden count=%lu", (unsigned long)count]);
-    } else {
-        NSUInteger count = 0;
-        for (UIView *view in pfStatusViews) {
-            NSNumber *wasHidden = [pfStatusViews objectForKey:view];
-            if (wasHidden) { view.hidden = wasHidden.boolValue; count++; }
-        }
-        [pfStatusViews removeAllObjects];
-        PFWrite([NSString stringWithFormat:@"v0.10 status views restored count=%lu", (unsigned long)count]);
-    }
-}
-
 static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
     if (!view || depth > 12) return nil;
     if ([view isKindOfClass:[UIControl class]]) {
