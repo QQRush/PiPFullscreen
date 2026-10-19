@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
 Name: PiP Fullscreen Experimental
-Version: 0.3.0
+Version: 0.4.0
 Architecture: iphoneos-arm64
-Description: Diagnostic PiP class scan saved to file; no window resizing yet.
+Description: Read-only PiP method introspection; no window resizing yet.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
