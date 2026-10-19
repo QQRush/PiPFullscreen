@@ -7,8 +7,6 @@
 @end
 
 static NSString * const kLogPath = @"/var/mobile/Library/Logs/PiPFullscreen.log";
-static NSMapTable<UIWindow *, NSNumber *> *savedStatusWindows;
-static NSUInteger activePiPCount = 0;
 
 static void PFWrite(NSString *message) {
     FILE *f = fopen(kLogPath.UTF8String, "a");
@@ -17,56 +15,66 @@ static void PFWrite(NSString *message) {
     fclose(f);
 }
 
-// Only touch SpringBoard's own status-bar windows; remember their original state.
-static void PFSetStatusBarHidden(BOOL hide) {
-    if (!savedStatusWindows) savedStatusWindows = [NSMapTable weakToStrongObjectsMapTable];
-    Class statusClass = NSClassFromString(@"UIStatusBarWindow");
-    if (hide) {
-        NSUInteger count = 0;
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            if (!statusClass || ![window isKindOfClass:statusClass]) continue;
-            if (![savedStatusWindows objectForKey:window]) {
-                [savedStatusWindows setObject:@(window.hidden) forKey:window];
-            }
-            window.hidden = YES;
-            count++;
-            }
-        }
-        PFWrite([NSString stringWithFormat:@"v0.6 hide status-bar windows: %lu", (unsigned long)count]);
-    } else {
-        for (UIWindow *window in savedStatusWindows) {
-            NSNumber *previous = [savedStatusWindows objectForKey:window];
-            if (previous) window.hidden = previous.boolValue;
-        }
-        [savedStatusWindows removeAllObjects];
-        PFWrite(@"v0.6 restored status-bar windows");
+static BOOL PFStatusName(NSString *name) {
+    NSString *lower = name.lowercaseString;
+    return [lower containsString:@"status"] || [lower containsString:@"bar"] ||
+           [lower containsString:@"foreground"] || [lower containsString:@"overlay"];
+}
+
+static void PFInspectView(UIView *view, NSUInteger depth, NSUInteger *budget) {
+    if (!view || depth > 6 || *budget == 0) return;
+    (*budget)--;
+    NSString *name = NSStringFromClass([view class]);
+    if (PFStatusName(name)) {
+        PFWrite([NSString stringWithFormat:@"v0.7 VIEW depth=%lu class=%@ frame=%@ hidden=%d alpha=%.2f",
+                 (unsigned long)depth, name, NSStringFromCGRect(view.frame),
+                 view.hidden, view.alpha]);
     }
+    for (UIView *child in view.subviews) {
+        PFInspectView(child, depth + 1, budget);
+        if (*budget == 0) break;
+    }
+}
+
+static void PFInspectWindows(void) {
+    UIApplication *app = [UIApplication sharedApplication];
+    NSUInteger scenes = 0, windows = 0;
+    PFWrite(@"=== v0.7 STATUS DIAGNOSTICS BEGIN ===");
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        scenes++;
+        UIWindowScene *ws = (UIWindowScene *)scene;
+        PFWrite([NSString stringWithFormat:@"v0.7 SCENE %@ activation=%ld",
+                 NSStringFromClass([scene class]), (long)scene.activationState]);
+        for (UIWindow *window in ws.windows) {
+            windows++;
+            PFWrite([NSString stringWithFormat:@"v0.7 WINDOW class=%@ level=%.1f frame=%@ hidden=%d alpha=%.2f root=%@",
+                     NSStringFromClass([window class]), window.windowLevel,
+                     NSStringFromCGRect(window.frame), window.hidden, window.alpha,
+                     window.rootViewController ? NSStringFromClass([window.rootViewController class]) : @"nil"]);
+            NSUInteger budget = 250;
+            PFInspectView(window, 0, &budget);
+        }
+    }
+    PFWrite([NSString stringWithFormat:@"=== v0.7 STATUS DIAGNOSTICS END scenes=%lu windows=%lu ===",
+             (unsigned long)scenes, (unsigned long)windows]);
 }
 
 %hook SBPIPContainerViewController
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
-    activePiPCount++;
     __weak SBPIPContainerViewController *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         SBPIPContainerViewController *controller = weakSelf;
-        if (!controller || !controller.view.window || activePiPCount == 0) return;
+        if (!controller || !controller.view.window) return;
         CGRect screen = [UIScreen mainScreen].bounds;
-        PFWrite([NSString stringWithFormat:@"v0.6 forcing PiP frame %@", NSStringFromCGRect(screen)]);
+        PFWrite([NSString stringWithFormat:@"v0.7 forcing PiP frame %@", NSStringFromCGRect(screen)]);
         [controller forcePictureInPictureToFrame:screen];
-        PFWrite([NSString stringWithFormat:@"v0.6 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
-        PFSetStatusBarHidden(YES);
+        PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
+        PFInspectWindows();
     });
-}
-
-- (void)viewWillDisappear:(BOOL)animated {
-    %orig;
-    if (activePiPCount > 0) activePiPCount--;
-    if (activePiPCount == 0) PFSetStatusBarHidden(NO);
 }
 
 %end
@@ -74,7 +82,7 @@ static void PFSetStatusBarHidden(BOOL hide) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.6 status bar experiment loaded");
+            PFWrite(@"PiPFullscreen v0.7 status diagnostic loaded");
             %init;
         }
     }
