@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
 Name: PiP Fullscreen Experimental
-Version: 0.1.0
+Version: 0.2.0
 Architecture: iphoneos-arm64
-Description: Experimental PiP window resizing for iOS 15 rootless. Not yet fullscreen.
+Description: Experimental PiP window resizing for iOS 15 rootless. PiP class discovery only; not yet fullscreen.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
