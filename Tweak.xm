@@ -153,6 +153,43 @@ static BOOL PFReturnToApp(void) {
     return YES;
 }
 
+static void PFInspectPiPOverlay(UIView *view, NSUInteger depth) {
+    if (!view || depth > 8) return;
+    CGRect rect = [view convertRect:view.bounds toView:nil];
+    NSString *name = NSStringFromClass([view class]);
+    if (rect.origin.y < 65 && rect.size.height > 0 && rect.size.width > 0 &&
+        (depth < 4 || PFStatusName(name) || [name containsString:@"Label"])) {
+        PFWrite([NSString stringWithFormat:@"v0.11 OVERLAY depth=%lu class=%@ frame=%@ hidden=%d alpha=%.2f",
+                 (unsigned long)depth, name, NSStringFromCGRect(rect), view.hidden, view.alpha]);
+    }
+    for (UIView *child in view.subviews) PFInspectPiPOverlay(child, depth + 1);
+}
+
+static void PFHomeDiagnostics(void) {
+    NSArray<NSString *> *classes = @[@"SBHomeHardwareButtonActions", @"SBHomeHardwareButton",
+      @"SBHomeButtonController", @"SBHardwareButtonService", @"SBHomeButtonPress", @"SBPressGestureRecognizer",
+      @"SBHomeHardwareButtonGestureRecognizer", @"SBHardwareButtonGestureRecognizer"];
+    for (NSString *name in classes) {
+        Class cls = NSClassFromString(name);
+        PFWrite([NSString stringWithFormat:@"v0.11 HOME CLASS %@ exists=%d", name, cls != Nil]);
+        if (!cls) continue;
+        for (Class cursor = cls; cursor && cursor != [NSObject class]; cursor = class_getSuperclass(cursor)) {
+            unsigned int count = 0;
+            Method *methods = class_copyMethodList(cursor, &count);
+            for (unsigned int i = 0; i < count; i++) {
+                NSString *selector = NSStringFromSelector(method_getName(methods[i]));
+                NSString *lower = selector.lowercaseString;
+                if ([lower containsString:@"press"] || [lower containsString:@"home"] ||
+                    [lower containsString:@"click"] || [lower containsString:@"tap"]) {
+                    PFWrite([NSString stringWithFormat:@"v0.11 HOME METHOD %@ %@ %s",
+                             NSStringFromClass(cursor), selector, method_getTypeEncoding(methods[i])]);
+                }
+            }
+            free(methods);
+        }
+    }
+}
+
 static void PFInspectWindows(void) {
     UIApplication *app = [UIApplication sharedApplication];
     NSUInteger scenes = 0, windows = 0;
@@ -194,7 +231,8 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFSetStatusHidden(YES);
+        PFWrite(@"v0.11 STATUS diagnostic only; no hiding");
+        PFInspectPiPOverlay(controller.view, 0);
     });
 }
 
@@ -202,7 +240,7 @@ static void PFInspectWindows(void) {
     %orig;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
-        PFSetStatusHidden(NO);
+        PFWrite(@"v0.11 PiP disappearing");
     }
 }
 
@@ -211,7 +249,7 @@ static void PFInspectWindows(void) {
 %hook SBHomeHardwareButtonActions
 
 - (void)performSinglePressUp {
-    PFWrite(@"v0.10 Home: performSinglePressUp intercepted");
+    PFWrite(@"v0.11 HOME EVENT performSinglePressUp intercepted");
     if (PFReturnToApp()) return;
     %orig;
 }
@@ -221,7 +259,8 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.10 status+Home experiment loaded");
+            PFWrite(@"PiPFullscreen v0.11 read-only diagnostics loaded");
+            PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         }
