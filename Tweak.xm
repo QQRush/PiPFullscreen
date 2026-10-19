@@ -75,23 +75,61 @@ static void PFScanControls(UIView *view, NSUInteger depth) {
     for (UIView *child in view.subviews) PFScanControls(child, depth + 1);
 }
 
-static UIControl *PFRestoreControl(UIView *view, NSUInteger depth) {
-    if (!view || depth > 12 || view.hidden || view.alpha < 0.05) return nil;
-    if ([view isKindOfClass:[UIControl class]]) {
-        UIControl *control = (UIControl *)view;
-        for (id target in control.allTargets) {
-            for (NSString *action in [control actionsForTarget:target forControlEvent:UIControlEventTouchUpInside] ?: @[]) {
-                NSString *a = action.lowercaseString;
-                if ([a containsString:@"restore"] || [a containsString:@"returnto"] ||
-                    [a containsString:@"expand"] || [a containsString:@"fullscreen"]) {
-                    PFWrite([NSString stringWithFormat:@"v0.9 matched restore control %@ action=%@", NSStringFromClass([control class]), action]);
-                    return control;
-                }
+static NSMapTable<UIView *, NSNumber *> *pfStatusViews;
+
+static void PFStatusViewsInTree(UIView *view, BOOL hide, NSUInteger depth, NSUInteger *count) {
+    if (!view || depth > 10) return;
+    NSString *name = NSStringFromClass([view class]);
+    if ([name isEqualToString:@"UIStatusBar_Modern"]) {
+        if (hide) {
+            if (![pfStatusViews objectForKey:view]) {
+                [pfStatusViews setObject:@(view.hidden) forKey:view];
             }
+            view.hidden = YES;
+            (*count)++;
+            PFWrite([NSString stringWithFormat:@"v0.10 status view hidden class=%@ window=%@",
+                     name, NSStringFromClass([view.window class])]);
+        }
+        return;
+    }
+    for (UIView *child in view.subviews) PFStatusViewsInTree(child, hide, depth + 1, count);
+}
+
+static void PFSetStatusHidden(BOOL hide) {
+    if (!pfStatusViews) pfStatusViews = [NSMapTable weakToStrongObjectsMapTable];
+    if (hide) {
+        NSUInteger count = 0;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+                PFStatusViewsInTree(window, YES, 0, &count);
+            }
+        }
+        PFWrite([NSString stringWithFormat:@"v0.10 status views hidden count=%lu", (unsigned long)count]);
+    } else {
+        NSUInteger count = 0;
+        for (UIView *view in pfStatusViews) {
+            NSNumber *wasHidden = [pfStatusViews objectForKey:view];
+            if (wasHidden) { view.hidden = wasHidden.boolValue; count++; }
+        }
+        [pfStatusViews removeAllObjects];
+        PFWrite([NSString stringWithFormat:@"v0.10 status views restored count=%lu", (unsigned long)count]);
+    }
+}
+
+static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
+    if (!view || depth > 12) return nil;
+    if ([view isKindOfClass:[UIControl class]]) {
+        UIControl *button = (UIControl *)view;
+        CGRect rect = [button convertRect:button.bounds toView:nil];
+        CGFloat width = [UIScreen mainScreen].bounds.size.width;
+        if (rect.origin.x > width - 55 && rect.origin.y >= 0 &&
+            rect.origin.y < 45 && rect.size.width > 15 && rect.size.width < 55) {
+            return button;
         }
     }
     for (UIView *child in view.subviews) {
-        UIControl *found = PFRestoreControl(child, depth + 1);
+        UIControl *found = PFRestoreButton(child, depth + 1);
         if (found) return found;
     }
     return nil;
@@ -99,21 +137,18 @@ static UIControl *PFRestoreControl(UIView *view, NSUInteger depth) {
 
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
-    if (!pip || !pip.view.window) {
-        PFWrite(@"v0.9 Home: no active PiP");
+    if (!pip || !pip.view.window ||
+        !CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds)) {
+        PFWrite(@"v0.10 Home: no fullscreen PiP");
         return NO;
     }
-    CGRect bounds = [UIScreen mainScreen].bounds;
-    if (!CGRectEqualToRect(pip.view.frame, bounds)) {
-        PFWrite(@"v0.9 Home: PiP not full screen");
-        return NO;
-    }
-    UIControl *button = PFRestoreControl(pip.view, 0);
+    UIControl *button = PFRestoreButton(pip.view, 0);
     if (!button) {
-        PFWrite(@"v0.9 Home: no restore control found; default Home");
+        PFWrite(@"v0.10 Home: top-right restore button not found");
         return NO;
     }
-    PFWrite(@"v0.9 Home: triggering native PiP restore button");
+    PFWrite([NSString stringWithFormat:@"v0.10 Home: sending native TouchUpInside to %@",
+             NSStringFromClass([button class])]);
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
     return YES;
 }
@@ -159,12 +194,16 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
+        PFSetStatusHidden(YES);
     });
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
-    if (pfActivePiP == self) pfActivePiP = nil;
+    if (pfActivePiP == self) {
+        pfActivePiP = nil;
+        PFSetStatusHidden(NO);
+    }
 }
 
 %end
@@ -172,6 +211,7 @@ static void PFInspectWindows(void) {
 %hook SBHomeHardwareButtonActions
 
 - (void)performSinglePressUp {
+    PFWrite(@"v0.10 Home: performSinglePressUp intercepted");
     if (PFReturnToApp()) return;
     %orig;
 }
@@ -181,7 +221,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.9 native restore button experiment loaded");
+            PFWrite(@"PiPFullscreen v0.10 status+Home experiment loaded");
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         }
