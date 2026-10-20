@@ -120,6 +120,40 @@ static BOOL PFReturnToApp(void) {
 }
 
 
+
+static NSMapTable<UIView *, NSNumber *> *pfHiddenStatusViews = nil;
+static void PFVisitStatusForeground(UIView *view, BOOL hide, NSUInteger depth, NSUInteger *budget) {
+    if (!view || depth > 22 || *budget == 0) return;
+    --(*budget);
+    if ([NSStringFromClass([view class]) isEqualToString:@"_UIStatusBarForegroundView"]) {
+        if (hide && ![pfHiddenStatusViews objectForKey:view]) {
+            [pfHiddenStatusViews setObject:@(view.alpha) forKey:view];
+            view.alpha = 0.0;
+            PFWrite([NSString stringWithFormat:@"v0.15 hidden foreground window=%@", NSStringFromClass([view.window class])]);
+        }
+    }
+    for (UIView *child in view.subviews) PFVisitStatusForeground(child, hide, depth + 1, budget);
+}
+static void PFUpdateStatusForeground(BOOL hide) {
+    if (!pfHiddenStatusViews) pfHiddenStatusViews = [NSMapTable weakToStrongObjectsMapTable];
+    if (!hide) {
+        for (UIView *view in pfHiddenStatusViews) {
+            NSNumber *oldAlpha = [pfHiddenStatusViews objectForKey:view];
+            if (oldAlpha) view.alpha = oldAlpha.doubleValue;
+        }
+        [pfHiddenStatusViews removeAllObjects];
+        PFWrite(@"v0.15 foreground restored");
+        return;
+    }
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            NSUInteger budget = 2500;
+            PFVisitStatusForeground(window, YES, 0, &budget);
+        }
+    }
+}
+
 static void PFStatusTraceView(UIView *view, NSUInteger depth, NSUInteger *remaining) {
     if (!view || depth > 18 || *remaining == 0) return;
     (*remaining)--;
@@ -224,7 +258,8 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFWrite(@"v0.14 status diagnostic only");
+        PFWrite(@"v0.15 foreground hiding experiment");
+        PFUpdateStatusForeground(YES);
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -233,6 +268,7 @@ static void PFInspectWindows(void) {
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (pfActivePiP == self) {
+        PFUpdateStatusForeground(NO);
         PFStatusTrace(@"PIP_WILL_DISAPPEAR");
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
@@ -261,7 +297,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.14 status transition diagnostic loaded");
+            PFWrite(@"PiPFullscreen v0.15 foreground experiment loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
