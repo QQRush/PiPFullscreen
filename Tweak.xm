@@ -129,6 +129,28 @@ static void PFInspectPiPOverlay(UIView *view, NSUInteger depth) {
     for (UIView *child in view.subviews) PFInspectPiPOverlay(child, depth + 1);
 }
 
+
+static void PF39InspectAggregator(void) {
+    Class cls=NSClassFromString(@"SBStatusBarStateAggregator");
+    PFWrite([NSString stringWithFormat:@"v0.39 aggregator class=%@ exists=%d",NSStringFromClass(cls),cls!=Nil]);
+    if (!cls) return;
+    for (Class cursor=cls;cursor && cursor!=[NSObject class];cursor=class_getSuperclass(cursor)) {
+        unsigned int count=0;
+        Method *methods=class_copyMethodList(cursor,&count);
+        for (unsigned int i=0;i<count;i++) {
+            NSString *name=NSStringFromSelector(method_getName(methods[i]));
+            NSString *lower=name.lowercaseString;
+            if ([lower containsString:@"status"] || [lower containsString:@"hidden"] ||
+                [lower containsString:@"update"] || [lower containsString:@"refresh"] ||
+                [lower containsString:@"aggregate"] || [lower containsString:@"state"]) {
+                PFWrite([NSString stringWithFormat:@"v0.39 aggregator method %@ %@ %s",
+                    NSStringFromClass(cursor),name,method_getTypeEncoding(methods[i])]);
+            }
+        }
+        free(methods);
+    }
+}
+
 static void PFHomeDiagnostics(void) {
     NSArray<NSString *> *classes = @[@"SBHomeHardwareButtonActions", @"SBHomeHardwareButton",
       @"SBHomeButtonController", @"SBHardwareButtonService", @"SBHomeButtonPress", @"SBPressGestureRecognizer",
@@ -397,12 +419,13 @@ static BOOL PF33StatusArmed(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"v0.35 SPRINGBOARD ctor reached");
+            PFWrite(@"v0.39 SPRINGBOARD aggregator diagnostics");
+            PF39InspectAggregator();
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
-            PF37Log(@"v0.38 Hongguo status foreground view toggle initializing");
+            PF37Log(@"v0.39 Hongguo existing status diagnostics");
             %init(PF37AppDiagnostics);
             static int pf37NotifyToken=0;
             int pf37Result=notify_register_dispatch(pf37Signal,&pf37NotifyToken,dispatch_get_main_queue(),^(int token) {
