@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
-Name: PiP Fullscreen Landscape Test
-Version: 0.43.0
+Name: PiP Fullscreen Status Test
+Version: 0.44.0
 Architecture: iphoneos-arm64
-Description: Experimental 90-degree left rotation for landscape PiP; portrait behavior unchanged.
+Description: Direct status-bar hide on PiP presentation; landscape rotation disabled.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
