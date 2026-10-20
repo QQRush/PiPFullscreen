@@ -130,6 +130,35 @@ static void PFInspectPiPOverlay(UIView *view, NSUInteger depth) {
 }
 
 
+
+static void PF40InspectVisibleStatus(NSString *phase) {
+    UIApplication *app=[UIApplication sharedApplication];
+    NSUInteger windows=0, status=0;
+    PFWrite([NSString stringWithFormat:@"v0.40 SNAPSHOT %@ BEGIN",phase]);
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            windows++;
+            BOOL interesting=(!w.hidden && w.alpha>0.01) || [NSStringFromClass(w.class) containsString:@"PIP"];
+            if (interesting) PFWrite([NSString stringWithFormat:@"v0.40 WINDOW %@ class=%@ level=%.1f hidden=%d alpha=%.2f",
+                phase,NSStringFromClass(w.class),w.windowLevel,w.hidden,w.alpha]);
+            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
+            NSUInteger budget=3000;
+            while (stack.count && budget--) {
+                UIView *v=stack.lastObject; [stack removeLastObject];
+                NSString *name=NSStringFromClass(v.class);
+                if ([name containsString:@"StatusBar"] || [name containsString:@"statusBar"]) {
+                    status++;
+                    PFWrite([NSString stringWithFormat:@"v0.40 STATUS %@ class=%@ frame=%@ hidden=%d alpha=%.2f window=%@ windowHidden=%d",
+                        phase,name,NSStringFromCGRect(v.frame),v.hidden,v.alpha,NSStringFromClass(w.class),w.hidden]);
+                }
+                [stack addObjectsFromArray:v.subviews];
+            }
+        }
+    }
+    PFWrite([NSString stringWithFormat:@"v0.40 SNAPSHOT %@ END windows=%lu status=%lu",phase,(unsigned long)windows,(unsigned long)status]);
+}
+
 static void PF39InspectAggregator(void) {
     Class cls=NSClassFromString(@"SBStatusBarStateAggregator");
     PFWrite([NSString stringWithFormat:@"v0.39 aggregator class=%@ exists=%d",NSStringFromClass(cls),cls!=Nil]);
@@ -360,6 +389,7 @@ static BOOL PF33StatusArmed(void) {
 
 - (void)viewWillAppear:(BOOL)animated {
     pf33PendingPiP = self;
+    PF40InspectVisibleStatus(@"BEFORE");
     PFWrite(@"v0.34 armed before viewWillAppear");
     %orig;
 }
@@ -377,6 +407,7 @@ static BOOL PF33StatusArmed(void) {
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
         pfActivePiP = controller;
         PF37Publish(YES);
+        PF40InspectVisibleStatus(@"FULLSCREEN");
         PFWrite(@"v0.34 fullscreen active: scene settings + foreground alpha armed");
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
@@ -392,6 +423,7 @@ static BOOL PF33StatusArmed(void) {
     if (pfActivePiP == self) {
         pfActivePiP = nil;
         PF37Publish(NO);
+        PF40InspectVisibleStatus(@"EXIT");
         PFWrite(@"v0.34 fullscreen ended: hooks disarmed");
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
