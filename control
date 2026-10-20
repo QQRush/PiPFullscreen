@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
 Name: PiP Fullscreen Experimental
-Version: 0.15.0
+Version: 0.16.0
 Architecture: iphoneos-arm64
-Description: Full-screen PiP, Home restore, experimental status foreground hiding.
+Description: Full-screen PiP and Home restore with status bar fade diagnostics.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
