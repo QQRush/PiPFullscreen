@@ -9,6 +9,7 @@
 @end
 
 static __weak SBPIPContainerViewController *pfActivePiP = nil;
+static BOOL pfRestoreInProgress = NO;
 static NSString * const kLogPath = @"/var/mobile/Library/Logs/PiPFullscreen.log";
 
 static void PFWrite(NSString *message) {
@@ -97,7 +98,7 @@ static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     if (!pip || !pip.view.window ||
         !CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds)) {
-        PFWrite(@"v0.10 Home: no fullscreen PiP");
+        PFWrite(@"v0.12 Home: no fullscreen PiP");
         return NO;
     }
     UIControl *button = PFRestoreButton(pip.view, 0);
@@ -107,7 +108,10 @@ static BOOL PFReturnToApp(void) {
     }
     PFWrite([NSString stringWithFormat:@"v0.10 Home: sending native TouchUpInside to %@",
              NSStringFromClass([button class])]);
+    if (pfRestoreInProgress) return YES;
+    pfRestoreInProgress = YES;
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
     return YES;
 }
 
@@ -198,7 +202,8 @@ static void PFInspectWindows(void) {
     %orig;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
-        PFWrite(@"v0.11 PiP disappearing");
+        pfRestoreInProgress = NO;
+        PFWrite(@"v0.12 PiP disappearing");
     }
 }
 
@@ -206,8 +211,14 @@ static void PFInspectWindows(void) {
 
 %hook SBHomeHardwareButtonActions
 
-- (void)performSinglePressUp {
-    PFWrite(@"v0.11 HOME EVENT performSinglePressUp intercepted");
+- (void)performSinglePressUpActions {
+    PFWrite(@"v0.12 HOME EVENT performSinglePressUpActions");
+    if (PFReturnToApp()) return;
+    %orig;
+}
+
+- (void)performSinglePressUpActionsWithSourceType:(NSUInteger)sourceType {
+    PFWrite([NSString stringWithFormat:@"v0.12 HOME EVENT performSinglePressUpActionsWithSourceType:%lu", (unsigned long)sourceType]);
     if (PFReturnToApp()) return;
     %orig;
 }
@@ -217,7 +228,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.11 read-only diagnostics loaded");
+            PFWrite(@"PiPFullscreen v0.12 corrected Home selectors loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
