@@ -249,6 +249,34 @@ static void PF23StatusBar(BOOL hide) {
     PFWrite([NSString stringWithFormat:@"v0.25 SEARCH windows=%lu found=%lu",(unsigned long)windows,(unsigned long)found]);
 }
 
+
+static void PF26VisibleStatusScan(void) {
+    NSUInteger matches=0;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (w.hidden || w.alpha < 0.01) continue;
+            PFWrite([NSString stringWithFormat:@"v0.26 VISIBLE_WINDOW %@ level=%.1f",NSStringFromClass([w class]),w.windowLevel]);
+            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
+            NSUInteger budget=5000;
+            while (stack.count && budget--) {
+                UIView *v=stack.lastObject; [stack removeLastObject];
+                NSString *name=NSStringFromClass([v class]);
+                NSString *lower=name.lowercaseString;
+                if ([lower containsString:@"status"] || [lower containsString:@"battery"] ||
+                    [lower containsString:@"wifi"] || [lower containsString:@"cellular"] ||
+                    [lower containsString:@"timeitem"] || [lower containsString:@"signal"]) {
+                    BOOL effectiveHidden=NO;
+                    for (UIView *a=v;a;a=a.superview) if (a.hidden || a.alpha<0.01) {effectiveHidden=YES;break;}
+                    if (matches++<100) PFWrite([NSString stringWithFormat:@"v0.26 CANDIDATE %@ window=%@ hidden=%d effectiveHidden=%d frame=%@",name,NSStringFromClass([w class]),v.hidden,effectiveHidden,NSStringFromCGRect(v.frame)]);
+                }
+                [stack addObjectsFromArray:v.subviews];
+            }
+        }
+    }
+    PFWrite([NSString stringWithFormat:@"v0.26 SCAN candidates=%lu",(unsigned long)matches]);
+}
+
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     if (!pip || !pip.view.window ||
@@ -471,6 +499,8 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PF18ScheduleSnapshots();
         PF20Trace(@"PIP_FULLSCREEN");
         PF22Inspect(@"PIP_FULLSCREEN");
+        PF26VisibleStatusScan();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ if (pfActivePiP==controller) PF26VisibleStatusScan(); });
         for (NSUInteger n=0;n<8;n++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(n*250*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PFWrite([NSString stringWithFormat:@"v0.25 TICK %lu active=%d restoring=%d window=%d",(unsigned long)n,pfActivePiP==controller,pfRestoreInProgress,controller.view.window!=nil]); if (controller.view.window && !pfRestoreInProgress) PF23StatusBar(YES); });
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
