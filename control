@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
 Name: PiP Fullscreen Experimental
-Version: 0.35.0
+Version: 0.36.0
 Architecture: iphoneos-arm64
-Description: Diagnostic Hongguo injection check; preserve fullscreen PiP and Home.
+Description: Sandbox-local Hongguo injection probe; preserve fullscreen PiP and Home.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
