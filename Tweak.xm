@@ -110,7 +110,9 @@ static BOOL PFReturnToApp(void) {
              NSStringFromClass([button class])]);
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
+    PFStatusTrace(@"HOME_BEFORE_RESTORE");
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ PFStatusTrace(@"HOME_PLUS_150MS"); });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
     return YES;
 }
@@ -149,6 +151,32 @@ static void PFSetStatusWindowsHidden(BOOL hidden) {
         }
     }
     PFWrite([NSString stringWithFormat:@"v0.13 STATUS dedicated windows=%lu", (unsigned long)count]);
+}
+
+static void PFStatusTraceView(UIView *view, NSUInteger depth, NSUInteger *remaining) {
+    if (!view || depth > 18 || *remaining == 0) return;
+    (*remaining)--;
+    NSString *name = NSStringFromClass([view class]);
+    if (PFStatusName(name) || [name containsString:@"StatusBar"] ||
+        [name containsString:@"Battery"] || [name containsString:@"Cellular"] ||
+        [name containsString:@"Wifi"] || [name containsString:@"TimeItem"]) {
+        CGRect rect = [view convertRect:view.bounds toView:nil];
+        PFWrite([NSString stringWithFormat:@"v0.14 STATUSVIEW %@ rect=%@ hidden=%d alpha=%.3f super=%@ window=%@",
+                 name, NSStringFromCGRect(rect), view.hidden, view.alpha,
+                 view.superview ? NSStringFromClass([view.superview class]) : @"nil",
+                 view.window ? NSStringFromClass([view.window class]) : @"nil"]);
+    }
+    for (UIView *child in view.subviews) PFStatusTraceView(child, depth + 1, remaining);
+}
+static void PFStatusTrace(NSString *phase) {
+    PFWrite([NSString stringWithFormat:@"v0.14 TRACE %@", phase]);
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            NSUInteger remaining = 1200;
+            PFStatusTraceView(window, 0, &remaining);
+        }
+    }
 }
 
 static void PFInspectPiPOverlay(UIView *view, NSUInteger depth) {
@@ -229,7 +257,8 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFSetStatusWindowsHidden(YES);
+        PFWrite(@"v0.14 status diagnostic only");
+        PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
 }
@@ -237,7 +266,7 @@ static void PFInspectWindows(void) {
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (pfActivePiP == self) {
-        PFSetStatusWindowsHidden(NO);
+        PFStatusTrace(@"PIP_WILL_DISAPPEAR");
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
@@ -265,7 +294,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.13 status window experiment loaded");
+            PFWrite(@"PiPFullscreen v0.14 status transition diagnostic loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
