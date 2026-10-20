@@ -277,6 +277,7 @@ static void PF26VisibleStatusScan(void) {
     PFWrite([NSString stringWithFormat:@"v0.26 SCAN candidates=%lu",(unsigned long)matches]);
 }
 
+static void PF27Apply(BOOL hide);
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     if (!pip || !pip.view.window ||
