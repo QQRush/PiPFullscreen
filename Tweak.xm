@@ -360,6 +360,7 @@ static void PF38Refresh(void) {
 
 // v0.33: arm scene status before PiP presentation and fullscreen sizing.
 static __weak SBPIPContainerViewController *pf33PendingPiP = nil;\n// v0.41: conditional HideBar foreground-view experiment; restore on PiP exit.
+// Rebuild requested after the previous queued workflow was cancelled.
 static NSMapTable<UIView *, NSNumber *> *pf41OriginalHidden;
 static void PF41Foreground(UIView *view, BOOL active) {
     if (!view) return;
