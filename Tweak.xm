@@ -246,6 +246,7 @@ static void PF23StatusBar(BOOL hide) {
             }
         }
     }
+    PFWrite([NSString stringWithFormat:@"v0.24 SEARCH windows=%lu found=%lu",(unsigned long)windows,(unsigned long)found]);
 }
 
 static BOOL PFReturnToApp(void) {
