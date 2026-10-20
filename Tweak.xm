@@ -94,6 +94,8 @@ static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
     return nil;
 }
 
+static void PFStatusTrace(NSString *phase);
+
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     if (!pip || !pip.view.window ||
