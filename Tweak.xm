@@ -113,7 +113,7 @@ static BOOL PFReturnToApp(void) {
              NSStringFromClass([button class])]);
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
-    PFRecordFade();
+    PFWrite(@"v0.17 Home restore initiated");
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
     return YES;
@@ -266,7 +266,7 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFWrite(@"v0.16 fade diagnostic only - no status hiding");
+        PFWrite(@"v0.17 status bar frame hook active");
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -276,12 +276,42 @@ static void PFInspectWindows(void) {
     %orig;
     if (pfActivePiP == self) {
         PFStatusTrace(@"PIP_WILL_DISAPPEAR");
+        // Restore status bar views before the PiP session ends.
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+                NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
+                while (stack.count) {
+                    UIView *view = stack.lastObject;
+                    [stack removeLastObject];
+                    if ([NSStringFromClass([view class]) isEqualToString:@"_UIStatusBar"] && view.hidden) view.hidden = NO;
+                    [stack addObjectsFromArray:view.subviews];
+                }
+            }
+        }
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
     }
 }
 
+%end
+
+
+// Springlicious-inspired status bar layout hook, scoped to fullscreen PiP.
+%hook _UIStatusBar
+- (CGRect)frame {
+    CGRect original = %orig;
+    SBPIPContainerViewController *pip = pfActivePiP;
+    if (pip && pip.view.window &&
+        CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds)) {
+        if (!self.hidden) {
+            PFWrite(@"v0.17 _UIStatusBar frame hook: hiding during fullscreen PiP");
+            self.hidden = YES;
+        }
+    }
+    return original;
+}
 %end
 
 %hook SBHomeHardwareButtonActions
@@ -303,7 +333,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.16 fade diagnostic loaded");
+            PFWrite(@"PiPFullscreen v0.17 status frame hook loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
