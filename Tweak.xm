@@ -137,6 +137,58 @@ static void PF21InstallManagerTrace(void) {
     free(methods);
 }
 
+
+static void PF22DumpClass(Class cls, NSString *label) {
+    if (!cls) { PFWrite([NSString stringWithFormat:@"v0.22 MISSING %@",label]); return; }
+    for (NSUInteger level=0; cls && level<5; cls++,level++) {
+        PFWrite([NSString stringWithFormat:@"v0.22 CLASS %@ level=%lu name=%@",
+            label,(unsigned long)level,NSStringFromClass(cls)]);
+        unsigned int count=0;
+        Method *methods=class_copyMethodList(cls,&count);
+        NSUInteger printed=0;
+        for (unsigned int i=0;i<count;i++) {
+            NSString *name=NSStringFromSelector(method_getName(methods[i]));
+            NSString *lower=name.lowercaseString;
+            if ([lower containsString:@"status"] || [lower containsString:@"visible"] ||
+                [lower containsString:@"hidden"] || [lower containsString:@"alpha"] ||
+                [lower containsString:@"foreground"] || [lower containsString:@"animation"] ||
+                [lower containsString:@"fade"] || [lower containsString:@"style"]) {
+                if (printed++ < 70) PFWrite([NSString stringWithFormat:@"v0.22 METHOD %@ %@ %s",
+                    NSStringFromClass(cls),name,method_getTypeEncoding(methods[i])]);
+            }
+        }
+        free(methods);
+    }
+}
+static void PF22Inspect(NSString *phase) {
+    PFWrite([NSString stringWithFormat:@"v0.22 PHASE %@",phase]);
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *ws=(UIWindowScene *)scene;
+        id manager=ws.statusBarManager;
+        PFWrite([NSString stringWithFormat:@"v0.22 SCENE manager=%@ hidden=%d",
+            NSStringFromClass([manager class]),ws.statusBarManager.statusBarHidden]);
+        PF22DumpClass([manager class],@"ACTIVE_MANAGER");
+        for (UIWindow *window in ws.windows) {
+            NSMutableArray *stack=[NSMutableArray arrayWithObject:window];
+            NSUInteger budget=2000,seen=0;
+            while (stack.count && budget--) {
+                UIView *v=stack.lastObject;
+                [stack removeLastObject];
+                NSString *name=NSStringFromClass([v class]);
+                if ([name.lowercaseString containsString:@"statusbar"]) {
+                    if (seen++ < 6) {
+                        PFWrite([NSString stringWithFormat:@"v0.22 VIEW %@ window=%@ hidden=%d alpha=%.2f",
+                            name,NSStringFromClass([window class]),window.hidden,v.alpha]);
+                        PF22DumpClass([v class],@"STATUS_VIEW");
+                    }
+                }
+                [stack addObjectsFromArray:v.subviews];
+            }
+        }
+    }
+}
+
 static void PF20StatusSample(NSString *phase, NSUInteger step) {
     UIApplication *app=[UIApplication sharedApplication];
     NSMutableString *line=[NSMutableString stringWithFormat:@"v0.20 STATUS %@ step=%lu ",phase,(unsigned long)step];
@@ -175,6 +227,7 @@ static BOOL PFReturnToApp(void) {
     pfRestoreInProgress = YES;
     PFWrite(@"v0.18 Home restore initiated");
     PF20Trace(@"HOME_RESTORE");
+    PF22Inspect(@"HOME_RESTORE");
     PF18Snapshot(@"HOME_BEFORE_RESTORE");
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
@@ -376,6 +429,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PFWrite(@"v0.18 diagnostics only; status hiding disabled");
         PF18ScheduleSnapshots();
         PF20Trace(@"PIP_FULLSCREEN");
+        PF22Inspect(@"PIP_FULLSCREEN");
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -415,7 +469,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.21 manager method call diagnostics loaded");
+            PFWrite(@"PiPFullscreen v0.22 class hierarchy diagnostics loaded");
             PF21InstallManagerTrace();
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
