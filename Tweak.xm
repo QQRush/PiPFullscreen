@@ -207,6 +207,18 @@ static void PF29AppStatus(NSString *phase) {
         phase,(unsigned long)sceneCount,(unsigned long)windowCount,(unsigned long)statusViews]);
 }
 
+// v0.30: narrow HideBar-inspired experiment. Only alter status bar opacity
+// while our Hongguo fullscreen PiP is active; leave all other states alone.
+%hook UIStatusBarStyleAttributes
+- (double)foregroundAlpha {
+    if (pfActivePiP && pfActivePiP.view.window &&
+        CGRectEqualToRect(pfActivePiP.view.frame, [UIScreen mainScreen].bounds)) {
+        return 0.0;
+    }
+    return %orig;
+}
+%end
+
 %hook SBPIPContainerViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -221,6 +233,7 @@ static void PF29AppStatus(NSString *phase) {
         [controller forcePictureInPictureToFrame:screen];
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
         pfActivePiP = controller;
+        PFWrite(@"v0.30 fullscreen active: conditional status alpha");
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
