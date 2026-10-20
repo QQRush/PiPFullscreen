@@ -452,6 +452,7 @@ static BOOL PF33StatusArmed(void) {
     if (pfActivePiP == self) {
         pfActivePiP = nil;
         PF37Publish(NO);
+        PF41Restore();
         PF40InspectVisibleStatus(@"EXIT");
         PFWrite(@"v0.34 fullscreen ended: hooks disarmed");
         pfRestoreInProgress = NO;
