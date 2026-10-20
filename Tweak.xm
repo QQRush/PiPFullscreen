@@ -95,6 +95,7 @@ static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
 }
 
 static void PFStatusTrace(NSString *phase);
+static void PFRecordFade(void);
 
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
@@ -112,45 +113,52 @@ static BOOL PFReturnToApp(void) {
              NSStringFromClass([button class])]);
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
-    PFStatusTrace(@"HOME_BEFORE_RESTORE");
+    PFRecordFade();
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ PFStatusTrace(@"HOME_PLUS_150MS"); });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
     return YES;
 }
 
 
 
-static NSMapTable<UIView *, NSNumber *> *pfHiddenStatusViews = nil;
-static void PFVisitStatusForeground(UIView *view, BOOL hide, NSUInteger depth, NSUInteger *budget) {
-    if (!view || depth > 22 || *budget == 0) return;
+static void PFFadeInspect(UIView *v, NSUInteger depth, NSUInteger *budget, NSUInteger ms) {
+    if (!v || depth > 20 || !*budget) return;
     --(*budget);
-    if ([NSStringFromClass([view class]) isEqualToString:@"_UIStatusBarForegroundView"]) {
-        if (hide && ![pfHiddenStatusViews objectForKey:view]) {
-            [pfHiddenStatusViews setObject:@(view.alpha) forKey:view];
-            view.alpha = 0.0;
-            PFWrite([NSString stringWithFormat:@"v0.15 hidden foreground window=%@", NSStringFromClass([view.window class])]);
-        }
+    NSString *name = NSStringFromClass([v class]);
+    BOOL relevant = [name containsString:@"StatusBar"] || [name containsString:@"Battery"] ||
+                    [name containsString:@"Wifi"] || [name containsString:@"StatusBarString"] ||
+                    [name isEqualToString:@"SBPIPWindow"];
+    if (relevant) {
+        CALayer *p = v.layer.presentationLayer;
+        NSArray *keys = [v.layer animationKeys];
+        PFWrite([NSString stringWithFormat:@"v0.16 FADE t=%lums view=%@ win=%@ alpha=%.3f presentation=%.3f hidden=%d layerOpacity=%.3f animations=%@",
+                 (unsigned long)ms, name, NSStringFromClass([v.window class]), v.alpha,
+                 p ? p.opacity : -1.0, v.hidden, v.layer.opacity, keys ?: @[]]);
     }
-    for (UIView *child in view.subviews) PFVisitStatusForeground(child, hide, depth + 1, budget);
+    for (UIView *child in v.subviews) PFFadeInspect(child, depth+1, budget, ms);
 }
-static void PFUpdateStatusForeground(BOOL hide) {
-    if (!pfHiddenStatusViews) pfHiddenStatusViews = [NSMapTable weakToStrongObjectsMapTable];
-    if (!hide) {
-        for (UIView *view in pfHiddenStatusViews) {
-            NSNumber *oldAlpha = [pfHiddenStatusViews objectForKey:view];
-            if (oldAlpha) view.alpha = oldAlpha.doubleValue;
-        }
-        [pfHiddenStatusViews removeAllObjects];
-        PFWrite(@"v0.15 foreground restored");
-        return;
-    }
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            NSUInteger budget = 2500;
-            PFVisitStatusForeground(window, YES, 0, &budget);
-        }
+static void PFRecordFade(void) {
+    PFWrite(@"v0.16 FADE START home restore");
+    for (NSUInteger i=0; i<=24; i++) {
+        NSUInteger ms=i*25;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)ms*NSEC_PER_MSEC),
+                       dispatch_get_main_queue(), ^{
+            PFWrite([NSString stringWithFormat:@"v0.16 SAMPLE %lums", (unsigned long)ms]);
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+                for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                    if (w.windowLevel > 0 || [NSStringFromClass([w class]) containsString:@"MainDisplay"] ||
+                        [NSStringFromClass([w class]) isEqualToString:@"UIWindow"]) {
+                        CALayer *p=w.layer.presentationLayer;
+                        PFWrite([NSString stringWithFormat:@"v0.16 WINDOW t=%lums %@ hidden=%d alpha=%.3f presentation=%.3f level=%.1f",
+                                 (unsigned long)ms, NSStringFromClass([w class]), w.hidden, w.alpha,
+                                 p ? p.opacity : -1.0, w.windowLevel]);
+                        NSUInteger budget=1800;
+                        PFFadeInspect(w, 0, &budget, ms);
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -258,8 +266,7 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFWrite(@"v0.15 foreground hiding experiment");
-        PFUpdateStatusForeground(YES);
+        PFWrite(@"v0.16 fade diagnostic only - no status hiding");
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -268,7 +275,6 @@ static void PFInspectWindows(void) {
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (pfActivePiP == self) {
-        PFUpdateStatusForeground(NO);
         PFStatusTrace(@"PIP_WILL_DISAPPEAR");
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
@@ -297,7 +303,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.15 foreground experiment loaded");
+            PFWrite(@"PiPFullscreen v0.16 fade diagnostic loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
