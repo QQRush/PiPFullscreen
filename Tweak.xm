@@ -299,6 +299,9 @@ static void PFInspectWindows(void) {
 
 
 // Springlicious-inspired status bar layout hook, scoped to fullscreen PiP.
+@interface _UIStatusBar : UIView
+@end
+
 %hook _UIStatusBar
 - (CGRect)frame {
     CGRect original = %orig;
