@@ -207,25 +207,29 @@ static void PF29AppStatus(NSString *phase) {
         phase,(unsigned long)sceneCount,(unsigned long)windowCount,(unsigned long)statusViews]);
 }
 
-// v0.32: use HideBar's UIApplicationSceneClientSettings hook,
-// gated to the existing SpringBoard fullscreen PiP state.
-static BOOL PF32Fullscreen(void) {
-    SBPIPContainerViewController *pip = pfActivePiP;
-    return pip && pip.view.window &&
-        CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds);
+// v0.33: arm scene status before PiP presentation and fullscreen sizing.
+static __weak SBPIPContainerViewController *pf33PendingPiP = nil;
+static BOOL PF33StatusArmed(void) {
+    return pf33PendingPiP != nil || pfActivePiP != nil;
 }
 
 %hook UIApplicationSceneClientSettings
 - (BOOL)statusBarHidden {
     BOOL original = %orig;
-    BOOL fullscreen = PF32Fullscreen();
+    BOOL armed = PF33StatusArmed();
     static NSUInteger calls = 0;
-    if (calls++ < 15) PFWrite([NSString stringWithFormat:@"v0.32 statusBarHidden original=%d fullscreen=%d", original, fullscreen]);
-    return fullscreen ? YES : original;
+    if (calls++ < 100) PFWrite([NSString stringWithFormat:@"v0.33 statusBarHidden call=%lu original=%d armed=%d", (unsigned long)calls, original, armed]);
+    return armed ? YES : original;
 }
 %end
 
 %hook SBPIPContainerViewController
+
+- (void)viewWillAppear:(BOOL)animated {
+    pf33PendingPiP = self;
+    PFWrite(@"v0.33 armed before viewWillAppear");
+    %orig;
+}
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
@@ -233,13 +237,13 @@ static BOOL PF32Fullscreen(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         SBPIPContainerViewController *controller = weakSelf;
-        if (!controller || !controller.view.window) return;
+        if (!controller || !controller.view.window) { if (pf33PendingPiP == controller) pf33PendingPiP = nil; return; }
         CGRect screen = [UIScreen mainScreen].bounds;
         PFWrite([NSString stringWithFormat:@"v0.7 forcing PiP frame %@", NSStringFromCGRect(screen)]);
         [controller forcePictureInPictureToFrame:screen];
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
         pfActivePiP = controller;
-        PFWrite(@"v0.32 fullscreen active: scene settings hook enabled");
+        PFWrite(@"v0.33 fullscreen active: scene settings armed");
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
@@ -250,9 +254,10 @@ static BOOL PF32Fullscreen(void) {
 
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
+    if (pf33PendingPiP == self) pf33PendingPiP = nil;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
-        PFWrite(@"v0.32 fullscreen ended: scene settings hook disabled");
+        PFWrite(@"v0.33 fullscreen ended: scene settings disarmed");
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
     }
