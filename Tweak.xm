@@ -140,7 +140,7 @@ static void PF21InstallManagerTrace(void) {
 
 static void PF22DumpClass(Class cls, NSString *label) {
     if (!cls) { PFWrite([NSString stringWithFormat:@"v0.22 MISSING %@",label]); return; }
-    for (NSUInteger level=0; cls && level<5; cls++,level++) {
+    for (NSUInteger level=0; cls && level<5; cls=class_getSuperclass(cls),level++) {
         PFWrite([NSString stringWithFormat:@"v0.22 CLASS %@ level=%lu name=%@",
             label,(unsigned long)level,NSStringFromClass(cls)]);
         unsigned int count=0;
