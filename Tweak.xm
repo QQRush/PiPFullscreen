@@ -94,190 +94,6 @@ static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
     return nil;
 }
 
-static void PFStatusTrace(NSString *phase);
-static void PF18Snapshot(NSString *phase);
-
-
-
-static NSMutableDictionary<NSString *, NSValue *> *pf21OriginalIMPs;
-static void PF21BoolSetter(id self, SEL cmd, BOOL value) {
-    if (pfActivePiP || pfRestoreInProgress) {
-        PFWrite([NSString stringWithFormat:@"v0.21 CALL %@ %@ value=%d pip=%d restore=%d",
-            NSStringFromClass([self class]),NSStringFromSelector(cmd),value,pfActivePiP!=nil,pfRestoreInProgress]);
-    }
-    IMP original=(IMP)[pf21OriginalIMPs[NSStringFromSelector(cmd)] pointerValue];
-    if (original) ((void (*)(id,SEL,BOOL))original)(self,cmd,value);
-}
-static void PF21InstallManagerTrace(void) {
-    Class cls=NSClassFromString(@"SBSceneStatusBarManager");
-    if (!cls) { PFWrite(@"v0.21 manager class unavailable"); return; }
-    pf21OriginalIMPs=[NSMutableDictionary dictionary];
-    unsigned int count=0;
-    Method *methods=class_copyMethodList(cls,&count);
-    for (unsigned int i=0;i<count;i++) {
-        Method m=methods[i];
-        SEL sel=method_getName(m);
-        NSString *name=NSStringFromSelector(sel);
-        NSString *lower=name.lowercaseString;
-        if (![lower containsString:@"status"] && ![lower containsString:@"hidden"] &&
-            ![lower containsString:@"visible"] && ![lower containsString:@"foreground"]) continue;
-        const char *encoding=method_getTypeEncoding(m);
-        PFWrite([NSString stringWithFormat:@"v0.21 METHOD %@ %s",name,encoding ?: "unknown"]);
-        if (method_getNumberOfArguments(m)!=3) continue;
-        char ret[32]={0},arg[32]={0};
-        method_getReturnType(m,ret,sizeof(ret));
-        method_getArgumentType(m,2,arg,sizeof(arg));
-        // Only replace void methods with exactly one boolean argument.
-        if (ret[0]!='v' || (arg[0]!='B' && arg[0]!='c')) continue;
-        IMP original=method_getImplementation(m);
-        pf21OriginalIMPs[name]=[NSValue valueWithPointer:(const void *)original];
-        method_setImplementation(m,(IMP)PF21BoolSetter);
-        PFWrite([NSString stringWithFormat:@"v0.21 HOOKED %@",name]);
-    }
-    free(methods);
-}
-
-
-static void PF22DumpClass(Class cls, NSString *label) {
-    if (!cls) { PFWrite([NSString stringWithFormat:@"v0.22 MISSING %@",label]); return; }
-    for (NSUInteger level=0; cls && level<5; cls=class_getSuperclass(cls),level++) {
-        PFWrite([NSString stringWithFormat:@"v0.22 CLASS %@ level=%lu name=%@",
-            label,(unsigned long)level,NSStringFromClass(cls)]);
-        unsigned int count=0;
-        Method *methods=class_copyMethodList(cls,&count);
-        NSUInteger printed=0;
-        for (unsigned int i=0;i<count;i++) {
-            NSString *name=NSStringFromSelector(method_getName(methods[i]));
-            NSString *lower=name.lowercaseString;
-            if ([lower containsString:@"status"] || [lower containsString:@"visible"] ||
-                [lower containsString:@"hidden"] || [lower containsString:@"alpha"] ||
-                [lower containsString:@"foreground"] || [lower containsString:@"animation"] ||
-                [lower containsString:@"fade"] || [lower containsString:@"style"]) {
-                if (printed++ < 70) PFWrite([NSString stringWithFormat:@"v0.22 METHOD %@ %@ %s",
-                    NSStringFromClass(cls),name,method_getTypeEncoding(methods[i])]);
-            }
-        }
-        free(methods);
-    }
-}
-static void PF22Inspect(NSString *phase) {
-    PFWrite([NSString stringWithFormat:@"v0.22 PHASE %@",phase]);
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        UIWindowScene *ws=(UIWindowScene *)scene;
-        id manager=ws.statusBarManager;
-        PFWrite([NSString stringWithFormat:@"v0.22 SCENE manager=%@ hidden=%d",
-            NSStringFromClass([manager class]),ws.statusBarManager.statusBarHidden]);
-        PF22DumpClass([manager class],@"ACTIVE_MANAGER");
-        for (UIWindow *window in ws.windows) {
-            NSMutableArray *stack=[NSMutableArray arrayWithObject:window];
-            NSUInteger budget=2000,seen=0;
-            while (stack.count && budget--) {
-                UIView *v=stack.lastObject;
-                [stack removeLastObject];
-                NSString *name=NSStringFromClass([v class]);
-                if ([name.lowercaseString containsString:@"statusbar"]) {
-                    if (seen++ < 6) {
-                        PFWrite([NSString stringWithFormat:@"v0.22 VIEW %@ window=%@ hidden=%d alpha=%.2f",
-                            name,NSStringFromClass([window class]),window.hidden,v.alpha]);
-                        PF22DumpClass([v class],@"STATUS_VIEW");
-                    }
-                }
-                [stack addObjectsFromArray:v.subviews];
-            }
-        }
-    }
-}
-
-static void PF20StatusSample(NSString *phase, NSUInteger step) {
-    UIApplication *app=[UIApplication sharedApplication];
-    NSMutableString *line=[NSMutableString stringWithFormat:@"v0.20 STATUS %@ step=%lu ",phase,(unsigned long)step];
-    for (UIScene *scene in app.connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        UIWindowScene *ws=(UIWindowScene *)scene;
-        UIStatusBarManager *manager=ws.statusBarManager;
-        [line appendFormat:@"scene=%p state=%ld manager=%@ hidden=%d frame=%@; ",
-            scene,(long)scene.activationState,NSStringFromClass([manager class]),
-            manager.statusBarHidden,NSStringFromCGRect(manager.statusBarFrame)];
-    }
-    PFWrite(line);
-}
-static void PF20Trace(NSString *phase) {
-    for (NSUInteger i=0;i<=20;i++) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*50*NSEC_PER_MSEC)),
-            dispatch_get_main_queue(),^{ PF20StatusSample(phase,i); });
-    }
-}
-
-
-static NSMapTable<UIView *, NSNumber *> *pf23SavedHidden;
-static void PF23StatusBar(BOOL hide) {
-    if (!pf23SavedHidden) pf23SavedHidden=[NSMapTable weakToStrongObjectsMapTable];
-    if (!hide) {
-        NSEnumerator *keys=[pf23SavedHidden keyEnumerator];
-        UIView *v=nil;
-        while ((v=[keys nextObject])) {
-            NSNumber *old=[pf23SavedHidden objectForKey:v];
-            if (old) v.hidden=old.boolValue;
-        }
-        [pf23SavedHidden removeAllObjects];
-        PFWrite(@"v0.23 RESTORE status bar");
-        return;
-    }
-    PFWrite(@"v0.25 SEARCH starting");
-    NSUInteger windows=0,found=0;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-            windows++;
-            PFWrite([NSString stringWithFormat:@"v0.25 WINDOW %@ hidden=%d",NSStringFromClass([w class]),w.hidden]);
-            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
-            NSUInteger budget=2500;
-            while (stack.count && budget--) {
-                UIView *v=stack.lastObject; [stack removeLastObject];
-                if ([NSStringFromClass([v class]) isEqualToString:@"UIStatusBar_Modern"]) {
-                    if (![pf23SavedHidden objectForKey:v]) [pf23SavedHidden setObject:@(v.hidden) forKey:v];
-                    v.hidden=YES;
-                    found++;
-                    PFWrite([NSString stringWithFormat:@"v0.25 HIDE %@ window=%@ windowHidden=%d",NSStringFromClass([v class]),NSStringFromClass([w class]),w.hidden]);
-                    continue;
-                }
-                [stack addObjectsFromArray:v.subviews];
-            }
-        }
-    }
-    PFWrite([NSString stringWithFormat:@"v0.25 SEARCH windows=%lu found=%lu",(unsigned long)windows,(unsigned long)found]);
-}
-
-
-static void PF26VisibleStatusScan(void) {
-    NSUInteger matches=0;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-            if (w.hidden || w.alpha < 0.01) continue;
-            PFWrite([NSString stringWithFormat:@"v0.26 VISIBLE_WINDOW %@ level=%.1f",NSStringFromClass([w class]),w.windowLevel]);
-            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
-            NSUInteger budget=5000;
-            while (stack.count && budget--) {
-                UIView *v=stack.lastObject; [stack removeLastObject];
-                NSString *name=NSStringFromClass([v class]);
-                NSString *lower=name.lowercaseString;
-                if ([lower containsString:@"status"] || [lower containsString:@"battery"] ||
-                    [lower containsString:@"wifi"] || [lower containsString:@"cellular"] ||
-                    [lower containsString:@"timeitem"] || [lower containsString:@"signal"]) {
-                    BOOL effectiveHidden=NO;
-                    for (UIView *a=v;a;a=a.superview) if (a.hidden || a.alpha<0.01) {effectiveHidden=YES;break;}
-                    if (matches++<100) PFWrite([NSString stringWithFormat:@"v0.26 CANDIDATE %@ window=%@ hidden=%d effectiveHidden=%d frame=%@",name,NSStringFromClass([w class]),v.hidden,effectiveHidden,NSStringFromCGRect(v.frame)]);
-                }
-                [stack addObjectsFromArray:v.subviews];
-            }
-        }
-    }
-    PFWrite([NSString stringWithFormat:@"v0.26 SCAN candidates=%lu",(unsigned long)matches]);
-}
-
-static void PF27Apply(BOOL hide);
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     if (!pip || !pip.view.window ||
@@ -294,43 +110,9 @@ static BOOL PFReturnToApp(void) {
              NSStringFromClass([button class])]);
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
-    PF23StatusBar(NO);
-    PF27Apply(NO);
-    PFWrite(@"v0.18 Home restore initiated");
-    PF20Trace(@"HOME_RESTORE");
-    PF22Inspect(@"HOME_RESTORE");
-    PF18Snapshot(@"HOME_BEFORE_RESTORE");
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
     return YES;
-}
-
-
-
-static void PFStatusTraceView(UIView *view, NSUInteger depth, NSUInteger *remaining) {
-    if (!view || depth > 18 || *remaining == 0) return;
-    (*remaining)--;
-    NSString *name = NSStringFromClass([view class]);
-    if (PFStatusName(name) || [name containsString:@"StatusBar"] ||
-        [name containsString:@"Battery"] || [name containsString:@"Cellular"] ||
-        [name containsString:@"Wifi"] || [name containsString:@"TimeItem"]) {
-        CGRect rect = [view convertRect:view.bounds toView:nil];
-        PFWrite([NSString stringWithFormat:@"v0.14 STATUSVIEW %@ rect=%@ hidden=%d alpha=%.3f super=%@ window=%@",
-                 name, NSStringFromCGRect(rect), view.hidden, view.alpha,
-                 view.superview ? NSStringFromClass([view.superview class]) : @"nil",
-                 view.window ? NSStringFromClass([view.window class]) : @"nil"]);
-    }
-    for (UIView *child in view.subviews) PFStatusTraceView(child, depth + 1, remaining);
-}
-static void PFStatusTrace(NSString *phase) {
-    PFWrite([NSString stringWithFormat:@"v0.14 TRACE %@", phase]);
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            NSUInteger remaining = 1200;
-            PFStatusTraceView(window, 0, &remaining);
-        }
-    }
 }
 
 static void PFInspectPiPOverlay(UIView *view, NSUInteger depth) {
@@ -394,141 +176,6 @@ static void PFInspectWindows(void) {
              (unsigned long)scenes, (unsigned long)windows]);
 }
 
-
-static void PF18Snapshot(NSString *phase) {
-    PFWrite([NSString stringWithFormat:@"v0.18 SNAPSHOT %@", phase]);
-    NSUInteger matches = 0;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            PFWrite([NSString stringWithFormat:@"v0.18 WINDOW %@ level=%.1f hidden=%d alpha=%.2f root=%@",
-                NSStringFromClass([window class]), window.windowLevel, window.hidden,
-                window.alpha, window.rootViewController ? NSStringFromClass([window.rootViewController class]) : @"nil"]);
-            NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
-            NSUInteger budget = 3000;
-            while (stack.count && budget--) {
-                UIView *view = stack.lastObject;
-                [stack removeLastObject];
-                NSString *name = NSStringFromClass([view class]);
-                if ([name containsString:@"StatusBar"] || [name containsString:@"Battery"] ||
-                    [name containsString:@"Wifi"] || [name containsString:@"Cellular"]) {
-                    matches++;
-                    NSMutableArray<NSString *> *ancestors = [NSMutableArray array];
-                    UIView *parent = view.superview;
-                    for (NSUInteger i=0; parent && i<7; i++,parent=parent.superview) {
-                        [ancestors addObject:[NSString stringWithFormat:@"%@{hidden=%d alpha=%.2f}",
-                            NSStringFromClass([parent class]),parent.hidden,parent.alpha]];
-                    }
-                    PFWrite([NSString stringWithFormat:@"v0.18 VIEW %@ ptr=%p hidden=%d alpha=%.2f window=%@ ancestors=%@",
-                        name,view,view.hidden,view.alpha,NSStringFromClass([view.window class]),
-                        [ancestors componentsJoinedByString:@" <- "]]);
-                }
-                [stack addObjectsFromArray:view.subviews];
-            }
-        }
-    }
-    PFWrite([NSString stringWithFormat:@"v0.18 END %@ matches=%lu",phase,(unsigned long)matches]);
-}
-static void PF18ScheduleSnapshots(void) {
-    PF18Snapshot(@"PIP_FULL_0");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
-        PF18Snapshot(@"PIP_FULL_100");
-    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
-        PF18Snapshot(@"PIP_FULL_500");
-    });
-}
-
-
-static void PF19AppSnapshot(NSString *phase) {
-    if (![NSThread isMainThread]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ PF19AppSnapshot(phase); });
-        return;
-    }
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/PiPFullscreen-App.log"];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    [fm createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
-    NSMutableString *log = [NSMutableString stringWithFormat:@"v0.19 APP %@ process=%@ state=%ld\n",phase,NSProcessInfo.processInfo.processName,(long)[UIApplication sharedApplication].applicationState];
-    NSMutableArray *windows = [NSMutableArray array];
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]]) [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
-    }
-    // iOS 15: inspect scene windows only; UIApplication.windows is deprecated.
-    for (UIWindow *window in windows) {
-        [log appendFormat:@"WINDOW %@ level=%.1f hidden=%d alpha=%.2f frame=%@\n",NSStringFromClass([window class]),window.windowLevel,window.hidden,window.alpha,NSStringFromCGRect(window.frame)];
-        NSMutableArray *stack = [NSMutableArray arrayWithObject:window];
-        NSUInteger budget=2000, matches=0;
-        while (stack.count && budget--) {
-            UIView *v=stack.lastObject;
-            [stack removeLastObject];
-            NSString *name=NSStringFromClass([v class]);
-            NSString *lower=name.lowercaseString;
-            if ([lower containsString:@"statusbar"] || [lower containsString:@"battery"] ||
-                [lower containsString:@"wifi"] || [lower containsString:@"cellular"] ||
-                [lower containsString:@"timeitem"]) {
-                if (matches++ < 45) [log appendFormat:@"VIEW %@ rect=%@ hidden=%d alpha=%.2f parent=%@\n",name,NSStringFromCGRect([v convertRect:v.bounds toView:nil]),v.hidden,v.alpha,NSStringFromClass([v.superview class])];
-            }
-            [stack addObjectsFromArray:v.subviews];
-        }
-        [log appendFormat:@"MATCHES %lu\n",(unsigned long)matches];
-    }
-    FILE *f=fopen(path.UTF8String,"a");
-    if (f) { fputs(log.UTF8String,f); fclose(f); }
-}
-static void PF19ScheduleAppSnapshot(NSString *phase) {
-    PF19AppSnapshot(phase);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PF19AppSnapshot([phase stringByAppendingString:@"_500ms"]); });
-}
-
-
-@interface _UIStatusBarForegroundView : UIView
-@end
-static NSMapTable<UIView *, NSNumber *> *pf27OriginalHidden;
-static void PF27Apply(BOOL hide) {
-    if (!pf27OriginalHidden) pf27OriginalHidden=[NSMapTable weakToStrongObjectsMapTable];
-    if (!hide) {
-        NSArray *views=[[pf27OriginalHidden keyEnumerator] allObjects];
-        for (UIView *v in views) {
-            NSNumber *original=[pf27OriginalHidden objectForKey:v];
-            if (original) v.hidden=original.boolValue;
-        }
-        [pf27OriginalHidden removeAllObjects];
-        PFWrite(@"v0.27 RESTORE foreground views");
-        return;
-    }
-    NSUInteger count=0;
-    Class target=NSClassFromString(@"_UIStatusBarForegroundView");
-    if (!target) { PFWrite(@"v0.27 foreground class unavailable"); return; }
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
-            NSUInteger budget=4000;
-            while (stack.count && budget--) {
-                UIView *v=stack.lastObject; [stack removeLastObject];
-                if ([v isKindOfClass:target]) {
-                    if (![pf27OriginalHidden objectForKey:v]) [pf27OriginalHidden setObject:@(v.hidden) forKey:v];
-                    v.hidden=YES;
-                    count++;
-                    PFWrite([NSString stringWithFormat:@"v0.27 HIDE foreground window=%@ windowHidden=%d",NSStringFromClass([w class]),w.hidden]);
-                } else [stack addObjectsFromArray:v.subviews];
-            }
-        }
-    }
-    PFWrite([NSString stringWithFormat:@"v0.27 APPLY found=%lu",(unsigned long)count]);
-}
-%hook _UIStatusBarForegroundView
-- (void)didMoveToWindow {
-    %orig;
-    if (pfActivePiP && !pfRestoreInProgress && self.window) {
-        if (!pf27OriginalHidden) pf27OriginalHidden=[NSMapTable weakToStrongObjectsMapTable];
-        if (![pf27OriginalHidden objectForKey:self]) [pf27OriginalHidden setObject:@(self.hidden) forKey:self];
-        self.hidden=YES;
-        PFWrite(@"v0.27 HOOK foreground didMoveToWindow hidden");
-    }
-}
-%end
-
 %hook SBPIPContainerViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -546,15 +193,7 @@ static void PF27Apply(BOOL hide) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFWrite(@"v0.18 diagnostics only; status hiding disabled");
-        PF18ScheduleSnapshots();
-        PF20Trace(@"PIP_FULLSCREEN");
-        PF22Inspect(@"PIP_FULLSCREEN");
-        PF26VisibleStatusScan();
-        PF27Apply(YES);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ if (pfActivePiP==controller) PF26VisibleStatusScan(); });
-        for (NSUInteger n=0;n<8;n++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(n*250*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PFWrite([NSString stringWithFormat:@"v0.25 TICK %lu active=%d restoring=%d window=%d",(unsigned long)n,pfActivePiP==controller,pfRestoreInProgress,controller.view.window!=nil]); if (controller.view.window && !pfRestoreInProgress) { PF23StatusBar(YES); PF27Apply(YES); } });
-        PFStatusTrace(@"PIP_FULL");
+        PFWrite(@"v0.11 STATUS diagnostic only; no hiding");
         PFInspectPiPOverlay(controller.view, 0);
     });
 }
@@ -562,11 +201,6 @@ static void PF27Apply(BOOL hide) {
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (pfActivePiP == self) {
-        PFStatusTrace(@"PIP_WILL_DISAPPEAR");
-        PF18Snapshot(@"PIP_WILL_DISAPPEAR");
-        PF20Trace(@"PIP_DISAPPEAR");
-        PF23StatusBar(NO);
-        PF27Apply(NO);
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
@@ -574,7 +208,6 @@ static void PF27Apply(BOOL hide) {
 }
 
 %end
-
 
 %hook SBHomeHardwareButtonActions
 
@@ -595,17 +228,10 @@ static void PF27Apply(BOOL hide) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.22 class hierarchy diagnostics loaded");
-            PF21InstallManagerTrace();
+            PFWrite(@"PiPFullscreen v0.12 corrected Home selectors loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
-        } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
-            PF19ScheduleAppSnapshot(@"APP_LAUNCH");
-            NSNotificationCenter *nc=[NSNotificationCenter defaultCenter];
-            [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note){ PF19ScheduleAppSnapshot(@"BECOME_ACTIVE"); }];
-            [nc addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note){ PF19ScheduleAppSnapshot(@"WILL_RESIGN_ACTIVE"); }];
-            [nc addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note){ PF19AppSnapshot(@"ENTER_BACKGROUND"); }];
         }
     }
 }
