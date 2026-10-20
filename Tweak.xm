@@ -5,7 +5,7 @@
 - (void)forcePictureInPictureToFrame:(CGRect)frame;
 @end
 
-// v0.44: direct status-bar hiding; landscape rotation disabled pending investigation.
+// v0.45: v0.42 SAFE behavior plus a requested status-bar layout pass.
 static __weak SBPIPContainerViewController *pfActivePiP = nil;
 static __weak SBPIPContainerViewController *pfPendingPiP = nil;
 static BOOL pfRestoreInProgress = NO;
@@ -34,11 +34,12 @@ static void PFRestoreForeground(void) {
         PFSetForegroundHidden(view, NO);
 }
 
-// Apply the proven foreground hide to already-existing SpringBoard views.
-static void PFHideExistingStatusViews(void) {
+// Request the same UIKit layout pass that eventually hides the status bar
+// when the clock changes. Do not directly toggle the view here.
+static void PFRequestStatusLayout(void) {
+    Class cls = NSClassFromString(@"_UIStatusBarForegroundView");
+    if (!cls) return;
     UIApplication *app = [UIApplication sharedApplication];
-    Class foregroundClass = NSClassFromString(@"_UIStatusBarForegroundView");
-    if (!foregroundClass) return;
     for (UIScene *scene in app.connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]]) continue;
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
@@ -47,8 +48,10 @@ static void PFHideExistingStatusViews(void) {
             while (stack.count && budget--) {
                 UIView *view = stack.lastObject;
                 [stack removeLastObject];
-                if ([view isKindOfClass:foregroundClass])
-                    PFSetForegroundHidden(view, YES);
+                if ([view isKindOfClass:cls]) {
+                    [view setNeedsLayout];
+                    [view layoutIfNeeded];
+                }
                 [stack addObjectsFromArray:view.subviews];
             }
         }
@@ -114,7 +117,6 @@ static BOOL PFReturnToApp(void) {
 - (void)viewWillAppear:(BOOL)animated {
     pfPendingPiP = self;
     %orig;
-    PFHideExistingStatusViews();
 }
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
@@ -128,7 +130,7 @@ static BOOL PFReturnToApp(void) {
         }
         [controller forcePictureInPictureToFrame:[UIScreen mainScreen].bounds];
         pfActivePiP = controller;
-        PFHideExistingStatusViews();
+        PFRequestStatusLayout();
     });
 }
 - (void)viewWillDisappear:(BOOL)animated {
@@ -136,9 +138,9 @@ static BOOL PFReturnToApp(void) {
     if (pfPendingPiP == self) pfPendingPiP = nil;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
+        PFRestoreForeground();
         pfRestoreInProgress = NO;
     }
-    if (!PFStatusArmed()) PFRestoreForeground();
 }
 %end
 
