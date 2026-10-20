@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
-Name: PiP Fullscreen Experimental
-Version: 0.41.0
+Name: PiP Fullscreen SAFE
+Version: 0.42.0
 Architecture: iphoneos-arm64
-Description: Conditional HideBar foreground view test; SAFE PiP/Home unchanged.
+Description: SAFE fullscreen PiP, native Home restore and conditional status bar hiding.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
