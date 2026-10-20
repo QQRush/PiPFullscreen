@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
 Name: PiP Fullscreen Experimental
-Version: 0.28.0
+Version: 0.29.0
 Architecture: iphoneos-arm64
-Description: Safe lightweight full-screen PiP with physical Home restore; based on proven v0.12.
+Description: SAFE full-screen PiP and Home restore with lightweight Hongguo status diagnostics.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
