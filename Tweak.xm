@@ -176,6 +176,37 @@ static void PFInspectWindows(void) {
              (unsigned long)scenes, (unsigned long)windows]);
 }
 
+
+static void PF29AppStatus(NSString *phase) {
+    UIApplication *app=[UIApplication sharedApplication];
+    NSUInteger sceneCount=0,windowCount=0,statusViews=0;
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        sceneCount++;
+        UIWindowScene *ws=(UIWindowScene *)scene;
+        UIStatusBarManager *manager=ws.statusBarManager;
+        PFWrite([NSString stringWithFormat:@"v0.29 HONGGUO %@ scene=%ld statusHidden=%d statusFrame=%@",
+            phase,(long)scene.activationState,manager.statusBarHidden,NSStringFromCGRect(manager.statusBarFrame)]);
+        for (UIWindow *w in ws.windows) {
+            windowCount++;
+            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
+            NSUInteger budget=1200;
+            while (stack.count && budget--) {
+                UIView *v=stack.lastObject; [stack removeLastObject];
+                NSString *name=NSStringFromClass([v class]);
+                if ([name.lowercaseString containsString:@"statusbar"]) {
+                    statusViews++;
+                    if (statusViews<=12) PFWrite([NSString stringWithFormat:@"v0.29 HONGGUO VIEW %@ window=%@ windowHidden=%d viewHidden=%d",
+                        name,NSStringFromClass([w class]),w.hidden,v.hidden]);
+                }
+                [stack addObjectsFromArray:v.subviews];
+            }
+        }
+    }
+    PFWrite([NSString stringWithFormat:@"v0.29 HONGGUO SUMMARY %@ scenes=%lu windows=%lu statusViews=%lu",
+        phase,(unsigned long)sceneCount,(unsigned long)windowCount,(unsigned long)statusViews]);
+}
+
 %hook SBPIPContainerViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -232,6 +263,16 @@ static void PFInspectWindows(void) {
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
+        } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
+            PFWrite(@"v0.29 HONGGUO diagnostics loaded");
+            NSNotificationCenter *nc=[NSNotificationCenter defaultCenter];
+            [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+                PF29AppStatus(@"ACTIVE");
+            }];
+            [nc addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+                PF29AppStatus(@"BACKGROUND");
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ PF29AppStatus(@"BACKGROUND_2S"); });
+            }];
         }
     }
 }
