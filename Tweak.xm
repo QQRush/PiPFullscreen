@@ -98,6 +98,45 @@ static void PFStatusTrace(NSString *phase);
 static void PF18Snapshot(NSString *phase);
 
 
+
+static NSMutableDictionary<NSString *, NSValue *> *pf21OriginalIMPs;
+static void PF21BoolSetter(id self, SEL cmd, BOOL value) {
+    if (pfActivePiP || pfRestoreInProgress) {
+        PFWrite([NSString stringWithFormat:@"v0.21 CALL %@ %@ value=%d pip=%d restore=%d",
+            NSStringFromClass([self class]),NSStringFromSelector(cmd),value,pfActivePiP!=nil,pfRestoreInProgress]);
+    }
+    IMP original=[pf21OriginalIMPs[NSStringFromSelector(cmd)] pointerValue];
+    if (original) ((void (*)(id,SEL,BOOL))original)(self,cmd,value);
+}
+static void PF21InstallManagerTrace(void) {
+    Class cls=NSClassFromString(@"SBSceneStatusBarManager");
+    if (!cls) { PFWrite(@"v0.21 manager class unavailable"); return; }
+    pf21OriginalIMPs=[NSMutableDictionary dictionary];
+    unsigned int count=0;
+    Method *methods=class_copyMethodList(cls,&count);
+    for (unsigned int i=0;i<count;i++) {
+        Method m=methods[i];
+        SEL sel=method_getName(m);
+        NSString *name=NSStringFromSelector(sel);
+        NSString *lower=name.lowercaseString;
+        if (![lower containsString:@"status"] && ![lower containsString:@"hidden"] &&
+            ![lower containsString:@"visible"] && ![lower containsString:@"foreground"]) continue;
+        const char *encoding=method_getTypeEncoding(m);
+        PFWrite([NSString stringWithFormat:@"v0.21 METHOD %@ %s",name,encoding ?: "unknown"]);
+        if (method_getNumberOfArguments(m)!=3) continue;
+        char ret[32]={0},arg[32]={0};
+        method_getReturnType(m,ret,sizeof(ret));
+        method_getArgumentType(m,2,arg,sizeof(arg));
+        // Only replace void methods with exactly one boolean argument.
+        if (ret[0]!='v' || (arg[0]!='B' && arg[0]!='c')) continue;
+        IMP original=method_getImplementation(m);
+        pf21OriginalIMPs[name]=[NSValue valueWithPointer:original];
+        method_setImplementation(m,(IMP)PF21BoolSetter);
+        PFWrite([NSString stringWithFormat:@"v0.21 HOOKED %@",name]);
+    }
+    free(methods);
+}
+
 static void PF20StatusSample(NSString *phase, NSUInteger step) {
     UIApplication *app=[UIApplication sharedApplication];
     NSMutableString *line=[NSMutableString stringWithFormat:@"v0.20 STATUS %@ step=%lu ",phase,(unsigned long)step];
@@ -376,7 +415,8 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.20 SpringBoard status transitions diagnostics loaded");
+            PFWrite(@"PiPFullscreen v0.21 manager method call diagnostics loaded");
+            PF21InstallManagerTrace();
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
