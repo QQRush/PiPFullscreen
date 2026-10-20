@@ -301,6 +301,11 @@ static BOOL PF33StatusArmed(void) {
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
+            NSString *probe = [NSTemporaryDirectory() stringByAppendingPathComponent:@"pipfullscreen-v036-loaded.txt"];
+            NSString *payload = [NSString stringWithFormat:@"v0.36 Hongguo injected pid=%d bundle=%@\\n", getpid(), [NSBundle mainBundle].bundleIdentifier];
+            BOOL wrote = [payload writeToFile:probe atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            NSLog(@"[PiPFullscreen v0.36] Hongguo injected; probe=%@ wrote=%d", probe, wrote);
+            PFWrite([NSString stringWithFormat:@"v0.36 HONGGUO probe path=%@ wrote=%d", probe, wrote]);
             PFWrite(@"v0.35 HONGGUO ctor reached");
             NSLog(@"[PiPFullscreen v0.35] HONGGUO ctor reached pid=%d", getpid());
             PFWrite([NSString stringWithFormat:@"v0.35 HONGGUO classes sceneSettings=%d foregroundStyle=%d foregroundView=%d",
