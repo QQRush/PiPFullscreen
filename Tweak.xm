@@ -115,6 +115,42 @@ static BOOL PFReturnToApp(void) {
     return YES;
 }
 
+
+static NSMapTable<UIWindow *, NSNumber *> *pfStatusWindows = nil;
+
+static void PFSetStatusWindowsHidden(BOOL hidden) {
+    if (!pfStatusWindows) pfStatusWindows = [NSMapTable weakToStrongObjectsMapTable];
+    if (!hidden) {
+        for (UIWindow *window in pfStatusWindows) {
+            NSNumber *original = [pfStatusWindows objectForKey:window];
+            if (original) window.alpha = original.doubleValue;
+        }
+        [pfStatusWindows removeAllObjects];
+        PFWrite(@"v0.13 STATUS restored");
+        return;
+    }
+    NSUInteger count = 0;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            NSString *name = NSStringFromClass([window class]);
+            NSString *root = window.rootViewController ? NSStringFromClass([window.rootViewController class]) : @"";
+            // Only touch dedicated status-bar windows, never a SpringBoard content window.
+            BOOL dedicated = [name containsString:@"StatusBarWindow"] ||
+                             [name containsString:@"StatusBarOverlayWindow"] ||
+                             ([name containsString:@"StatusBar"] && [name containsString:@"Window"]);
+            if (!dedicated) continue;
+            if (![pfStatusWindows objectForKey:window]) {
+                [pfStatusWindows setObject:@(window.alpha) forKey:window];
+            }
+            window.alpha = 0.0;
+            count++;
+            PFWrite([NSString stringWithFormat:@"v0.13 STATUS hidden window=%@ root=%@", name, root]);
+        }
+    }
+    PFWrite([NSString stringWithFormat:@"v0.13 STATUS dedicated windows=%lu", (unsigned long)count]);
+}
+
 static void PFInspectPiPOverlay(UIView *view, NSUInteger depth) {
     if (!view || depth > 8) return;
     CGRect rect = [view convertRect:view.bounds toView:nil];
@@ -193,7 +229,7 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFWrite(@"v0.11 STATUS diagnostic only; no hiding");
+        PFSetStatusWindowsHidden(YES);
         PFInspectPiPOverlay(controller.view, 0);
     });
 }
@@ -201,6 +237,7 @@ static void PFInspectWindows(void) {
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (pfActivePiP == self) {
+        PFSetStatusWindowsHidden(NO);
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
@@ -228,7 +265,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.12 corrected Home selectors loaded");
+            PFWrite(@"PiPFullscreen v0.13 status window experiment loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
