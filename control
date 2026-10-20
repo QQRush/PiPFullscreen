@@ -1,6 +1,6 @@
 Package: com.qqrush.pipfullscreen
 Name: PiP Fullscreen Experimental
-Version: 0.39.0
+Version: 0.40.0
 Architecture: iphoneos-arm64
 Description: Read-only SpringBoard status aggregator introspection; SAFE PiP/Home unchanged.
 Maintainer: QQRush
