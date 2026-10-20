@@ -105,7 +105,7 @@ static void PF21BoolSetter(id self, SEL cmd, BOOL value) {
         PFWrite([NSString stringWithFormat:@"v0.21 CALL %@ %@ value=%d pip=%d restore=%d",
             NSStringFromClass([self class]),NSStringFromSelector(cmd),value,pfActivePiP!=nil,pfRestoreInProgress]);
     }
-    IMP original=[pf21OriginalIMPs[NSStringFromSelector(cmd)] pointerValue];
+    IMP original=(IMP)[pf21OriginalIMPs[NSStringFromSelector(cmd)] pointerValue];
     if (original) ((void (*)(id,SEL,BOOL))original)(self,cmd,value);
 }
 static void PF21InstallManagerTrace(void) {
@@ -130,7 +130,7 @@ static void PF21InstallManagerTrace(void) {
         // Only replace void methods with exactly one boolean argument.
         if (ret[0]!='v' || (arg[0]!='B' && arg[0]!='c')) continue;
         IMP original=method_getImplementation(m);
-        pf21OriginalIMPs[name]=[NSValue valueWithPointer:original];
+        pf21OriginalIMPs[name]=[NSValue valueWithPointer:(const void *)original];
         method_setImplementation(m,(IMP)PF21BoolSetter);
         PFWrite([NSString stringWithFormat:@"v0.21 HOOKED %@",name]);
     }
