@@ -40,7 +40,7 @@ static void PFRefreshStatusForeground(BOOL hide) {
     Class foregroundClass = NSClassFromString(@"_UIStatusBarForegroundView");
     if (!foregroundClass) return;
     UIApplication *app = [UIApplication sharedApplication];
-    NSMutableArray<UIWindow *> *windows = [NSMutableArray arrayWithArray:app.windows];
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
     for (UIScene *scene in app.connectedScenes) {
         if ([scene isKindOfClass:[UIWindowScene class]])
             [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
