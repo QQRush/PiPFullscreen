@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
-Name: PiP Fullscreen Layout Test
-Version: 0.45.0
+Name: PiP Fullscreen Foreground Test
+Version: 0.46.0
 Architecture: iphoneos-arm64
-Description: v0.42 SAFE baseline with status-bar layout refresh after fullscreen.
+Description: Experimental foreground-only immediate status-bar hide and restore.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
