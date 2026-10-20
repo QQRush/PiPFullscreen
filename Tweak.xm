@@ -268,10 +268,13 @@ static NSUInteger PF38Walk(UIView *view, BOOL active, NSUInteger *budget) {
 static void PF38Refresh(void) {
     UIApplication *app=[UIApplication sharedApplication];
     NSUInteger windows=0,found=0;
-    for (UIWindow *window in app.windows) {
-        windows++;
-        NSUInteger budget=2000;
-        found+=PF38Walk(window,pf37AppPiPActive,&budget);
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            windows++;
+            NSUInteger budget=2000;
+            found+=PF38Walk(window,pf37AppPiPActive,&budget);
+        }
     }
     PF37Log([NSString stringWithFormat:@"v0.38 refresh active=%d windows=%lu statusViews=%lu",
         pf37AppPiPActive,(unsigned long)windows,(unsigned long)found]);
