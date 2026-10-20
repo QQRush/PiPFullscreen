@@ -5,12 +5,13 @@
 - (void)forcePictureInPictureToFrame:(CGRect)frame;
 @end
 
-// SAFE v0.42: preserve the proven fullscreen, native Home restore,
-// and conditional status-bar foreground behavior of v0.41.
+// v0.43 experimental landscape rotation; v0.42 remains the SAFE baseline.
 static __weak SBPIPContainerViewController *pfActivePiP = nil;
 static __weak SBPIPContainerViewController *pfPendingPiP = nil;
 static BOOL pfRestoreInProgress = NO;
 static NSMapTable<UIView *, NSNumber *> *pfOriginalHidden;
+static __weak UIControl *pfLandscapeRestoreButton = nil;
+static BOOL pfLandscapeRotated = NO;
 
 static BOOL PFStatusArmed(void) {
     return pfPendingPiP != nil || pfActivePiP != nil;
@@ -57,7 +58,7 @@ static BOOL PFReturnToApp(void) {
     if (!pip || !pip.view.window ||
         !CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds))
         return NO;
-    UIControl *button = PFRestoreButton(pip.view, 0);
+    UIControl *button = pfLandscapeRotated ? pfLandscapeRestoreButton : PFRestoreButton(pip.view, 0);
     if (!button) return NO;
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
@@ -97,6 +98,9 @@ static BOOL PFReturnToApp(void) {
 }
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
+    // Capture the original PiP aspect ratio before the fullscreen resize.
+    CGSize originalSize = self.view.bounds.size;
+    BOOL landscape = originalSize.width > originalSize.height && originalSize.height > 0;
     __weak SBPIPContainerViewController *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
@@ -105,14 +109,34 @@ static BOOL PFReturnToApp(void) {
             if (pfPendingPiP == controller) pfPendingPiP = nil;
             return;
         }
-        [controller forcePictureInPictureToFrame:[UIScreen mainScreen].bounds];
+        CGRect screen = [UIScreen mainScreen].bounds;
+        [controller forcePictureInPictureToFrame:screen];
         pfActivePiP = controller;
+        pfLandscapeRotated = NO;
+        pfLandscapeRestoreButton = nil;
+        if (landscape) {
+            // Keep a reference before rotating: transformed screen coordinates
+            // no longer match the portrait restore-button position.
+            pfLandscapeRestoreButton = PFRestoreButton(controller.view, 0);
+            controller.view.transform = CGAffineTransformIdentity;
+            controller.view.bounds = CGRectMake(0, 0, screen.size.height, screen.size.width);
+            controller.view.center = CGPointMake(CGRectGetMidX(screen), CGRectGetMidY(screen));
+            controller.view.transform = CGAffineTransformMakeRotation((CGFloat)-M_PI_2);
+            pfLandscapeRotated = YES;
+        }
     });
 }
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     if (pfPendingPiP == self) pfPendingPiP = nil;
     if (pfActivePiP == self) {
+        if (pfLandscapeRotated) {
+            self.view.transform = CGAffineTransformIdentity;
+            self.view.bounds = [UIScreen mainScreen].bounds;
+            self.view.center = CGPointMake(CGRectGetMidX([UIScreen mainScreen].bounds), CGRectGetMidY([UIScreen mainScreen].bounds));
+        }
+        pfLandscapeRotated = NO;
+        pfLandscapeRestoreButton = nil;
         pfActivePiP = nil;
         PFRestoreForeground();
         pfRestoreInProgress = NO;
