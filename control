@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
 Name: PiP Fullscreen Experimental
-Version: 0.37.0
+Version: 0.38.0
 Architecture: iphoneos-arm64
-Description: App-side status diagnostics and PiP signaling; no UI behavior changes.
+Description: Conditional Hongguo status foreground visibility with restore.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
