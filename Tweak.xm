@@ -239,7 +239,51 @@ static void PF37Publish(BOOL active) {
         notify_cancel(token);
     }
 }
+
+// v0.38: restore each view's original hidden state, never change SpringBoard's SAFE controls.
+static NSMapTable<UIView *, NSNumber *> *pf38OriginalHidden;
+static void PF38SetStatusView(UIView *view, BOOL active) {
+    if (!view) return;
+    if (!pf38OriginalHidden) pf38OriginalHidden=[NSMapTable weakToStrongObjectsMapTable];
+    NSNumber *saved=[pf38OriginalHidden objectForKey:view];
+    if (active) {
+        if (!saved) [pf38OriginalHidden setObject:@(view.hidden) forKey:view];
+        view.hidden=YES;
+    } else if (saved) {
+        view.hidden=saved.boolValue;
+        [pf38OriginalHidden removeObjectForKey:view];
+    }
+}
+static NSUInteger PF38Walk(UIView *view, BOOL active, NSUInteger *budget) {
+    if (!view || !*budget) return 0;
+    --*budget;
+    NSUInteger found=0;
+    if ([view isKindOfClass:NSClassFromString(@"_UIStatusBarForegroundView")]) {
+        PF38SetStatusView(view,active);
+        found++;
+    }
+    for (UIView *child in view.subviews) found+=PF38Walk(child,active,budget);
+    return found;
+}
+static void PF38Refresh(void) {
+    UIApplication *app=[UIApplication sharedApplication];
+    NSUInteger windows=0,found=0;
+    for (UIWindow *window in app.windows) {
+        windows++;
+        NSUInteger budget=2000;
+        found+=PF38Walk(window,pf37AppPiPActive,&budget);
+    }
+    PF37Log([NSString stringWithFormat:@"v0.38 refresh active=%d windows=%lu statusViews=%lu",
+        pf37AppPiPActive,(unsigned long)windows,(unsigned long)found]);
+}
+
 %group PF37AppDiagnostics
+%hook _UIStatusBarForegroundView
+- (void)layoutSubviews {
+    %orig;
+    PF38SetStatusView((UIView *)self,pf37AppPiPActive);
+}
+%end
 %hook UIApplicationSceneClientSettings
 - (BOOL)statusBarHidden {
     BOOL original = %orig;
@@ -355,7 +399,7 @@ static BOOL PF33StatusArmed(void) {
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
-            PF37Log(@"v0.37 Hongguo constructor; diagnostics initializing");
+            PF37Log(@"v0.38 Hongguo status foreground view toggle initializing");
             %init(PF37AppDiagnostics);
             static int pf37NotifyToken=0;
             int pf37Result=notify_register_dispatch(pf37Signal,&pf37NotifyToken,dispatch_get_main_queue(),^(int token) {
@@ -363,6 +407,7 @@ static BOOL PF33StatusArmed(void) {
                 int result=notify_get_state(token,&value);
                 pf37AppPiPActive=(result==NOTIFY_STATUS_OK && value==1);
                 PF37Log([NSString stringWithFormat:@"Darwin signal received result=%d active=%d",result,pf37AppPiPActive]);
+                PF38Refresh();
             });
             PF37Log([NSString stringWithFormat:@"Darwin listener result=%d token=%d",pf37Result,pf37NotifyToken]);
             NSString *probe = [NSTemporaryDirectory() stringByAppendingPathComponent:@"pipfullscreen-v036-loaded.txt"];
