@@ -112,7 +112,8 @@ static BOOL PFReturnToApp(void) {
              NSStringFromClass([button class])]);
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
-    PFWrite(@"v0.17 Home restore initiated");
+    PFWrite(@"v0.18 Home restore initiated");
+    PF18Snapshot(@"HOME_BEFORE_RESTORE");
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
     return YES;
@@ -207,6 +208,51 @@ static void PFInspectWindows(void) {
              (unsigned long)scenes, (unsigned long)windows]);
 }
 
+
+static void PF18Snapshot(NSString *phase) {
+    PFWrite([NSString stringWithFormat:@"v0.18 SNAPSHOT %@", phase]);
+    NSUInteger matches = 0;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            PFWrite([NSString stringWithFormat:@"v0.18 WINDOW %@ level=%.1f hidden=%d alpha=%.2f root=%@",
+                NSStringFromClass([window class]), window.windowLevel, window.hidden,
+                window.alpha, window.rootViewController ? NSStringFromClass([window.rootViewController class]) : @"nil"]);
+            NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
+            NSUInteger budget = 3000;
+            while (stack.count && budget--) {
+                UIView *view = stack.lastObject;
+                [stack removeLastObject];
+                NSString *name = NSStringFromClass([view class]);
+                if ([name containsString:@"StatusBar"] || [name containsString:@"Battery"] ||
+                    [name containsString:@"Wifi"] || [name containsString:@"Cellular"]) {
+                    matches++;
+                    NSMutableArray<NSString *> *ancestors = [NSMutableArray array];
+                    UIView *parent = view.superview;
+                    for (NSUInteger i=0; parent && i<7; i++,parent=parent.superview) {
+                        [ancestors addObject:[NSString stringWithFormat:@"%@{hidden=%d alpha=%.2f}",
+                            NSStringFromClass([parent class]),parent.hidden,parent.alpha]];
+                    }
+                    PFWrite([NSString stringWithFormat:@"v0.18 VIEW %@ ptr=%p hidden=%d alpha=%.2f window=%@ ancestors=%@",
+                        name,view,view.hidden,view.alpha,NSStringFromClass([view.window class]),
+                        [ancestors componentsJoinedByString:@" <- "]]);
+                }
+                [stack addObjectsFromArray:view.subviews];
+            }
+        }
+    }
+    PFWrite([NSString stringWithFormat:@"v0.18 END %@ matches=%lu",phase,(unsigned long)matches]);
+}
+static void PF18ScheduleSnapshots(void) {
+    PF18Snapshot(@"PIP_FULL_0");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        PF18Snapshot(@"PIP_FULL_100");
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        PF18Snapshot(@"PIP_FULL_500");
+    });
+}
+
 %hook SBPIPContainerViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -224,7 +270,8 @@ static void PFInspectWindows(void) {
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
-        PFWrite(@"v0.17 status bar frame hook active");
+        PFWrite(@"v0.18 diagnostics only; status hiding disabled");
+        PF18ScheduleSnapshots();
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -234,19 +281,7 @@ static void PFInspectWindows(void) {
     %orig;
     if (pfActivePiP == self) {
         PFStatusTrace(@"PIP_WILL_DISAPPEAR");
-        // Restore status bar views before the PiP session ends.
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-                NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
-                while (stack.count) {
-                    UIView *view = stack.lastObject;
-                    [stack removeLastObject];
-                    if ([NSStringFromClass([view class]) isEqualToString:@"_UIStatusBar"] && view.hidden) view.hidden = NO;
-                    [stack addObjectsFromArray:view.subviews];
-                }
-            }
-        }
+        PF18Snapshot(@"PIP_WILL_DISAPPEAR");
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
@@ -255,25 +290,6 @@ static void PFInspectWindows(void) {
 
 %end
 
-
-// Springlicious-inspired status bar layout hook, scoped to fullscreen PiP.
-@interface _UIStatusBar : UIView
-@end
-
-%hook _UIStatusBar
-- (CGRect)frame {
-    CGRect original = %orig;
-    SBPIPContainerViewController *pip = pfActivePiP;
-    if (pip && pip.view.window &&
-        CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds)) {
-        if (!self.hidden) {
-            PFWrite(@"v0.17 _UIStatusBar frame hook: hiding during fullscreen PiP");
-            self.hidden = YES;
-        }
-    }
-    return original;
-}
-%end
 
 %hook SBHomeHardwareButtonActions
 
@@ -294,7 +310,7 @@ static void PFInspectWindows(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.17 status frame hook loaded");
+            PFWrite(@"PiPFullscreen v0.18 diagnostics loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
