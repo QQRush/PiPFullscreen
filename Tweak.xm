@@ -207,15 +207,41 @@ static void PF29AppStatus(NSString *phase) {
         phase,(unsigned long)sceneCount,(unsigned long)windowCount,(unsigned long)statusViews]);
 }
 
-// v0.30: narrow HideBar-inspired experiment. Only alter status bar opacity
-// while our Hongguo fullscreen PiP is active; leave all other states alone.
-%hook UIStatusBarStyleAttributes
-- (double)foregroundAlpha {
-    if (pfActivePiP && pfActivePiP.view.window &&
-        CGRectEqualToRect(pfActivePiP.view.frame, [UIScreen mainScreen].bounds)) {
-        return 0.0;
+// v0.31: targeted HideBar-style foreground view handling.
+// No global status bar changes; original behavior restored after PiP.
+static BOOL PF31Fullscreen(void) {
+    SBPIPContainerViewController *pip = pfActivePiP;
+    return pip && pip.view.window &&
+           CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds);
+}
+
+static void PF31UpdateStatusViews(BOOL hide) {
+    Class statusClass = NSClassFromString(@"_UIStatusBarForegroundView");
+    if (!statusClass) { PFWrite(@"v0.31 foreground class missing"); return; }
+    NSUInteger found = 0;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
+            NSUInteger budget = 4000;
+            while (stack.count && budget--) {
+                UIView *view = stack.lastObject;
+                [stack removeLastObject];
+                if ([view isKindOfClass:statusClass]) {
+                    view.hidden = hide;
+                    found++;
+                }
+                [stack addObjectsFromArray:view.subviews];
+            }
+        }
     }
-    return %orig;
+    PFWrite([NSString stringWithFormat:@"v0.31 status foreground hide=%d found=%lu", hide, (unsigned long)found]);
+}
+
+%hook _UIStatusBarForegroundView
+- (void)layoutSubviews {
+    %orig;
+    if (PF31Fullscreen()) self.hidden = YES;
 }
 %end
 
@@ -233,7 +259,7 @@ static void PF29AppStatus(NSString *phase) {
         [controller forcePictureInPictureToFrame:screen];
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
         pfActivePiP = controller;
-        PFWrite(@"v0.30 fullscreen active: conditional status alpha");
+        PF31UpdateStatusViews(YES);
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
@@ -246,6 +272,7 @@ static void PF29AppStatus(NSString *phase) {
     %orig;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
+        PF31UpdateStatusViews(NO);
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
     }
