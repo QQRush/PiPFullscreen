@@ -209,6 +209,41 @@ static void PF20Trace(NSString *phase) {
     }
 }
 
+
+static NSMapTable<UIView *, NSNumber *> *pf23SavedHidden;
+static void PF23StatusBar(BOOL hide) {
+    if (!pf23SavedHidden) pf23SavedHidden=[NSMapTable weakToStrongObjectsMapTable];
+    if (!hide) {
+        NSEnumerator *keys=[pf23SavedHidden keyEnumerator];
+        UIView *v=nil;
+        while ((v=[keys nextObject])) {
+            NSNumber *old=[pf23SavedHidden objectForKey:v];
+            if (old) v.hidden=old.boolValue;
+        }
+        [pf23SavedHidden removeAllObjects];
+        PFWrite(@"v0.23 RESTORE status bar");
+        return;
+    }
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (![NSStringFromClass([w class]) isEqualToString:@"SBMainSwitcherWindow"]) continue;
+            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
+            NSUInteger budget=2500;
+            while (stack.count && budget--) {
+                UIView *v=stack.lastObject; [stack removeLastObject];
+                if ([NSStringFromClass([v class]) isEqualToString:@"UIStatusBar_Modern"]) {
+                    if (![pf23SavedHidden objectForKey:v]) [pf23SavedHidden setObject:@(v.hidden) forKey:v];
+                    v.hidden=YES;
+                    PFWrite([NSString stringWithFormat:@"v0.23 HIDE %@ window=%@",NSStringFromClass([v class]),NSStringFromClass([w class])]);
+                    continue;
+                }
+                [stack addObjectsFromArray:v.subviews];
+            }
+        }
+    }
+}
+
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     if (!pip || !pip.view.window ||
@@ -225,6 +260,7 @@ static BOOL PFReturnToApp(void) {
              NSStringFromClass([button class])]);
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
+    PF23StatusBar(NO);
     PFWrite(@"v0.18 Home restore initiated");
     PF20Trace(@"HOME_RESTORE");
     PF22Inspect(@"HOME_RESTORE");
@@ -430,6 +466,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PF18ScheduleSnapshots();
         PF20Trace(@"PIP_FULLSCREEN");
         PF22Inspect(@"PIP_FULLSCREEN");
+        for (NSUInteger n=0;n<8;n++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(n*250*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ if (pfActivePiP==controller && !pfRestoreInProgress) PF23StatusBar(YES); });
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -441,6 +478,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PFStatusTrace(@"PIP_WILL_DISAPPEAR");
         PF18Snapshot(@"PIP_WILL_DISAPPEAR");
         PF20Trace(@"PIP_DISAPPEAR");
+        PF23StatusBar(NO);
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
