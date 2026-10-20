@@ -254,6 +254,47 @@ static void PF18ScheduleSnapshots(void) {
     });
 }
 
+
+static void PF19AppSnapshot(NSString *phase) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ PF19AppSnapshot(phase); });
+        return;
+    }
+    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/PiPFullscreen-App.log"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+    NSMutableString *log = [NSMutableString stringWithFormat:@"v0.19 APP %@ process=%@ state=%ld\n",phase,NSProcessInfo.processInfo.processName,(long)[UIApplication sharedApplication].applicationState];
+    NSMutableArray *windows = [NSMutableArray array];
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+    }
+    if (!windows.count) [windows addObjectsFromArray:[UIApplication sharedApplication].windows];
+    for (UIWindow *window in windows) {
+        [log appendFormat:@"WINDOW %@ level=%.1f hidden=%d alpha=%.2f frame=%@\n",NSStringFromClass([window class]),window.windowLevel,window.hidden,window.alpha,NSStringFromCGRect(window.frame)];
+        NSMutableArray *stack = [NSMutableArray arrayWithObject:window];
+        NSUInteger budget=2000, matches=0;
+        while (stack.count && budget--) {
+            UIView *v=stack.lastObject;
+            [stack removeLastObject];
+            NSString *name=NSStringFromClass([v class]);
+            NSString *lower=name.lowercaseString;
+            if ([lower containsString:@"statusbar"] || [lower containsString:@"battery"] ||
+                [lower containsString:@"wifi"] || [lower containsString:@"cellular"] ||
+                [lower containsString:@"timeitem"]) {
+                if (matches++ < 45) [log appendFormat:@"VIEW %@ rect=%@ hidden=%d alpha=%.2f parent=%@\n",name,NSStringFromCGRect([v convertRect:v.bounds toView:nil]),v.hidden,v.alpha,NSStringFromClass([v.superview class])];
+            }
+            [stack addObjectsFromArray:v.subviews];
+        }
+        [log appendFormat:@"MATCHES %lu\n",(unsigned long)matches];
+    }
+    FILE *f=fopen(path.UTF8String,"a");
+    if (f) { fputs(log.UTF8String,f); fclose(f); }
+}
+static void PF19ScheduleAppSnapshot(NSString *phase) {
+    PF19AppSnapshot(phase);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PF19AppSnapshot([phase stringByAppendingString:@"_500ms"]); });
+}
+
 %hook SBPIPContainerViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -311,10 +352,16 @@ static void PF18ScheduleSnapshots(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.18 diagnostics loaded");
+            PFWrite(@"PiPFullscreen v0.19 SpringBoard diagnostics loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
+        } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
+            PF19ScheduleAppSnapshot(@"APP_LAUNCH");
+            NSNotificationCenter *nc=[NSNotificationCenter defaultCenter];
+            [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note){ PF19ScheduleAppSnapshot(@"BECOME_ACTIVE"); }];
+            [nc addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note){ PF19ScheduleAppSnapshot(@"WILL_RESIGN_ACTIVE"); }];
+            [nc addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note){ PF19AppSnapshot(@"ENTER_BACKGROUND"); }];
         }
     }
 }
