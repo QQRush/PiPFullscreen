@@ -5,7 +5,7 @@
 - (void)forcePictureInPictureToFrame:(CGRect)frame;
 @end
 
-// v0.45: v0.42 SAFE behavior plus a requested status-bar layout pass.
+// v0.46 experiment: v0.42 fullscreen/Home, foreground-only status control.
 static __weak SBPIPContainerViewController *pfActivePiP = nil;
 static __weak SBPIPContainerViewController *pfPendingPiP = nil;
 static BOOL pfRestoreInProgress = NO;
@@ -34,26 +34,26 @@ static void PFRestoreForeground(void) {
         PFSetForegroundHidden(view, NO);
 }
 
-// Request the same UIKit layout pass that eventually hides the status bar
-// when the clock changes. Do not directly toggle the view here.
-static void PFRequestStatusLayout(void) {
-    Class cls = NSClassFromString(@"_UIStatusBarForegroundView");
-    if (!cls) return;
+// Refresh the foreground views on both PiP transitions, without waiting
+// for a clock-triggered layout pass. Never touch other status-bar internals.
+static void PFRefreshStatusForeground(BOOL hide) {
+    Class foregroundClass = NSClassFromString(@"_UIStatusBarForegroundView");
+    if (!foregroundClass) return;
     UIApplication *app = [UIApplication sharedApplication];
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray arrayWithArray:app.windows];
     for (UIScene *scene in app.connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
-            NSUInteger budget = 5000;
-            while (stack.count && budget--) {
-                UIView *view = stack.lastObject;
-                [stack removeLastObject];
-                if ([view isKindOfClass:cls]) {
-                    [view setNeedsLayout];
-                    [view layoutIfNeeded];
-                }
-                [stack addObjectsFromArray:view.subviews];
-            }
+        if ([scene isKindOfClass:[UIWindowScene class]])
+            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+    }
+    for (UIWindow *window in windows) {
+        NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
+        NSUInteger budget = 10000;
+        while (stack.count && budget--) {
+            UIView *view = stack.lastObject;
+            [stack removeLastObject];
+            if ([view isKindOfClass:foregroundClass])
+                PFSetForegroundHidden(view, hide);
+            [stack addObjectsFromArray:view.subviews];
         }
     }
 }
@@ -98,21 +98,6 @@ static BOOL PFReturnToApp(void) {
 }
 %end
 
-// Keep both legacy v0.34 conditional hooks: their removal has not been tested.
-%hook UIStatusBarStyleAttributes
-- (double)foregroundAlpha {
-    double original = %orig;
-    return PFStatusArmed() ? 0.0 : original;
-}
-%end
-
-%hook UIApplicationSceneClientSettings
-- (BOOL)statusBarHidden {
-    BOOL original = %orig;
-    return PFStatusArmed() ? YES : original;
-}
-%end
-
 %hook SBPIPContainerViewController
 - (void)viewWillAppear:(BOOL)animated {
     pfPendingPiP = self;
@@ -130,7 +115,7 @@ static BOOL PFReturnToApp(void) {
         }
         [controller forcePictureInPictureToFrame:[UIScreen mainScreen].bounds];
         pfActivePiP = controller;
-        PFRequestStatusLayout();
+        PFRefreshStatusForeground(YES);
     });
 }
 - (void)viewWillDisappear:(BOOL)animated {
@@ -138,6 +123,7 @@ static BOOL PFReturnToApp(void) {
     if (pfPendingPiP == self) pfPendingPiP = nil;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
+        PFRefreshStatusForeground(NO);
         PFRestoreForeground();
         pfRestoreInProgress = NO;
     }
