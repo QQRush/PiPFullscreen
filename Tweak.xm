@@ -207,41 +207,21 @@ static void PF29AppStatus(NSString *phase) {
         phase,(unsigned long)sceneCount,(unsigned long)windowCount,(unsigned long)statusViews]);
 }
 
-// v0.31: targeted HideBar-style foreground view handling.
-// No global status bar changes; original behavior restored after PiP.
-static BOOL PF31Fullscreen(void) {
+// v0.32: use HideBar's UIApplicationSceneClientSettings hook,
+// gated to the existing SpringBoard fullscreen PiP state.
+static BOOL PF32Fullscreen(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     return pip && pip.view.window &&
-           CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds);
+        CGRectEqualToRect(pip.view.frame, [UIScreen mainScreen].bounds);
 }
 
-static void PF31UpdateStatusViews(BOOL hide) {
-    Class statusClass = NSClassFromString(@"_UIStatusBarForegroundView");
-    if (!statusClass) { PFWrite(@"v0.31 foreground class missing"); return; }
-    NSUInteger found = 0;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:window];
-            NSUInteger budget = 4000;
-            while (stack.count && budget--) {
-                UIView *view = stack.lastObject;
-                [stack removeLastObject];
-                if ([view isKindOfClass:statusClass]) {
-                    view.hidden = hide;
-                    found++;
-                }
-                [stack addObjectsFromArray:view.subviews];
-            }
-        }
-    }
-    PFWrite([NSString stringWithFormat:@"v0.31 status foreground hide=%d found=%lu", hide, (unsigned long)found]);
-}
-
-%hook _UIStatusBarForegroundView
-- (void)layoutSubviews {
-    %orig;
-    if (PF31Fullscreen()) self.hidden = YES;
+%hook UIApplicationSceneClientSettings
+- (BOOL)statusBarHidden {
+    BOOL original = %orig;
+    BOOL fullscreen = PF32Fullscreen();
+    static NSUInteger calls = 0;
+    if (calls++ < 15) PFWrite([NSString stringWithFormat:@"v0.32 statusBarHidden original=%d fullscreen=%d", original, fullscreen]);
+    return fullscreen ? YES : original;
 }
 %end
 
@@ -259,7 +239,7 @@ static void PF31UpdateStatusViews(BOOL hide) {
         [controller forcePictureInPictureToFrame:screen];
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
         pfActivePiP = controller;
-        PF31UpdateStatusViews(YES);
+        PFWrite(@"v0.32 fullscreen active: scene settings hook enabled");
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
@@ -272,7 +252,7 @@ static void PF31UpdateStatusViews(BOOL hide) {
     %orig;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
-        PF31UpdateStatusViews(NO);
+        PFWrite(@"v0.32 fullscreen ended: scene settings hook disabled");
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
     }
