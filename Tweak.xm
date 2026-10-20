@@ -213,12 +213,23 @@ static BOOL PF33StatusArmed(void) {
     return pf33PendingPiP != nil || pfActivePiP != nil;
 }
 
+// v0.34: combine two confirmed HideBar methods under the same PiP gate.
+%hook UIStatusBarStyleAttributes
+- (double)foregroundAlpha {
+    double original = %orig;
+    BOOL armed = PF33StatusArmed();
+    static NSUInteger calls = 0;
+    if (calls++ < 100) PFWrite([NSString stringWithFormat:@"v0.34 foregroundAlpha call=%lu original=%.3f armed=%d", (unsigned long)calls, original, armed]);
+    return armed ? 0.0 : original;
+}
+%end
+
 %hook UIApplicationSceneClientSettings
 - (BOOL)statusBarHidden {
     BOOL original = %orig;
     BOOL armed = PF33StatusArmed();
     static NSUInteger calls = 0;
-    if (calls++ < 100) PFWrite([NSString stringWithFormat:@"v0.33 statusBarHidden call=%lu original=%d armed=%d", (unsigned long)calls, original, armed]);
+    if (calls++ < 100) PFWrite([NSString stringWithFormat:@"v0.34 statusBarHidden call=%lu original=%d armed=%d", (unsigned long)calls, original, armed]);
     return armed ? YES : original;
 }
 %end
@@ -227,7 +238,7 @@ static BOOL PF33StatusArmed(void) {
 
 - (void)viewWillAppear:(BOOL)animated {
     pf33PendingPiP = self;
-    PFWrite(@"v0.33 armed before viewWillAppear");
+    PFWrite(@"v0.34 armed before viewWillAppear");
     %orig;
 }
 
@@ -243,7 +254,7 @@ static BOOL PF33StatusArmed(void) {
         [controller forcePictureInPictureToFrame:screen];
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
         pfActivePiP = controller;
-        PFWrite(@"v0.33 fullscreen active: scene settings armed");
+        PFWrite(@"v0.34 fullscreen active: scene settings + foreground alpha armed");
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
         PFScanControls(controller.view, 0);
@@ -257,7 +268,7 @@ static BOOL PF33StatusArmed(void) {
     if (pf33PendingPiP == self) pf33PendingPiP = nil;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
-        PFWrite(@"v0.33 fullscreen ended: scene settings disarmed");
+        PFWrite(@"v0.34 fullscreen ended: hooks disarmed");
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
     }
