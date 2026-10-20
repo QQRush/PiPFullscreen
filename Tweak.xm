@@ -268,7 +268,7 @@ static void PF19AppSnapshot(NSString *phase) {
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if ([scene isKindOfClass:[UIWindowScene class]]) [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
     }
-    if (!windows.count) [windows addObjectsFromArray:[UIApplication sharedApplication].windows];
+    // iOS 15: inspect scene windows only; UIApplication.windows is deprecated.
     for (UIWindow *window in windows) {
         [log appendFormat:@"WINDOW %@ level=%.1f hidden=%d alpha=%.2f frame=%@\n",NSStringFromClass([window class]),window.windowLevel,window.hidden,window.alpha,NSStringFromCGRect(window.frame)];
         NSMutableArray *stack = [NSMutableArray arrayWithObject:window];
