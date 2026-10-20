@@ -120,41 +120,6 @@ static BOOL PFReturnToApp(void) {
 }
 
 
-static NSMapTable<UIWindow *, NSNumber *> *pfStatusWindows = nil;
-
-static void PFSetStatusWindowsHidden(BOOL hidden) {
-    if (!pfStatusWindows) pfStatusWindows = [NSMapTable weakToStrongObjectsMapTable];
-    if (!hidden) {
-        for (UIWindow *window in pfStatusWindows) {
-            NSNumber *original = [pfStatusWindows objectForKey:window];
-            if (original) window.alpha = original.doubleValue;
-        }
-        [pfStatusWindows removeAllObjects];
-        PFWrite(@"v0.13 STATUS restored");
-        return;
-    }
-    NSUInteger count = 0;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            NSString *name = NSStringFromClass([window class]);
-            NSString *root = window.rootViewController ? NSStringFromClass([window.rootViewController class]) : @"";
-            // Only touch dedicated status-bar windows, never a SpringBoard content window.
-            BOOL dedicated = [name containsString:@"StatusBarWindow"] ||
-                             [name containsString:@"StatusBarOverlayWindow"] ||
-                             ([name containsString:@"StatusBar"] && [name containsString:@"Window"]);
-            if (!dedicated) continue;
-            if (![pfStatusWindows objectForKey:window]) {
-                [pfStatusWindows setObject:@(window.alpha) forKey:window];
-            }
-            window.alpha = 0.0;
-            count++;
-            PFWrite([NSString stringWithFormat:@"v0.13 STATUS hidden window=%@ root=%@", name, root]);
-        }
-    }
-    PFWrite([NSString stringWithFormat:@"v0.13 STATUS dedicated windows=%lu", (unsigned long)count]);
-}
-
 static void PFStatusTraceView(UIView *view, NSUInteger depth, NSUInteger *remaining) {
     if (!view || depth > 18 || *remaining == 0) return;
     (*remaining)--;
