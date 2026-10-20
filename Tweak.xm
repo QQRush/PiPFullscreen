@@ -97,6 +97,27 @@ static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
 static void PFStatusTrace(NSString *phase);
 static void PF18Snapshot(NSString *phase);
 
+
+static void PF20StatusSample(NSString *phase, NSUInteger step) {
+    UIApplication *app=[UIApplication sharedApplication];
+    NSMutableString *line=[NSMutableString stringWithFormat:@"v0.20 STATUS %@ step=%lu ",phase,(unsigned long)step];
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *ws=(UIWindowScene *)scene;
+        UIStatusBarManager *manager=ws.statusBarManager;
+        [line appendFormat:@"scene=%p state=%ld manager=%@ hidden=%d frame=%@; ",
+            scene,(long)scene.activationState,NSStringFromClass([manager class]),
+            manager.statusBarHidden,NSStringFromCGRect(manager.statusBarFrame)];
+    }
+    PFWrite(line);
+}
+static void PF20Trace(NSString *phase) {
+    for (NSUInteger i=0;i<=20;i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(i*50*NSEC_PER_MSEC)),
+            dispatch_get_main_queue(),^{ PF20StatusSample(phase,i); });
+    }
+}
+
 static BOOL PFReturnToApp(void) {
     SBPIPContainerViewController *pip = pfActivePiP;
     if (!pip || !pip.view.window ||
@@ -114,6 +135,7 @@ static BOOL PFReturnToApp(void) {
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
     PFWrite(@"v0.18 Home restore initiated");
+    PF20Trace(@"HOME_RESTORE");
     PF18Snapshot(@"HOME_BEFORE_RESTORE");
     [button sendActionsForControlEvents:UIControlEventTouchUpInside];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ pfRestoreInProgress = NO; });
@@ -314,6 +336,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PFScanControls(controller.view, 0);
         PFWrite(@"v0.18 diagnostics only; status hiding disabled");
         PF18ScheduleSnapshots();
+        PF20Trace(@"PIP_FULLSCREEN");
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -324,6 +347,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
     if (pfActivePiP == self) {
         PFStatusTrace(@"PIP_WILL_DISAPPEAR");
         PF18Snapshot(@"PIP_WILL_DISAPPEAR");
+        PF20Trace(@"PIP_DISAPPEAR");
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
@@ -352,7 +376,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.19 SpringBoard diagnostics loaded");
+            PFWrite(@"PiPFullscreen v0.20 SpringBoard status transitions diagnostics loaded");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
