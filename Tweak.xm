@@ -2,6 +2,7 @@
 #import <dispatch/dispatch.h>
 #import <stdio.h>
 #import <unistd.h>
+#import <notify.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -208,6 +209,57 @@ static void PF29AppStatus(NSString *phase) {
         phase,(unsigned long)sceneCount,(unsigned long)windowCount,(unsigned long)statusViews]);
 }
 
+
+static NSString *PF37ProbePath(void) {
+    return [NSTemporaryDirectory() stringByAppendingPathComponent:@"pipfullscreen-v037-diagnostic.txt"];
+}
+static void PF37Log(NSString *line) {
+    NSString *path = PF37ProbePath();
+    NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!h) {
+        [[NSData data] writeToFile:path atomically:YES];
+        h = [NSFileHandle fileHandleForWritingAtPath:path];
+    }
+    if (h) {
+        @try {
+            [h seekToEndOfFile];
+            [h writeData:[[line stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+            [h closeFile];
+        } @catch (NSException *e) {}
+    }
+}
+static BOOL pf37AppPiPActive = NO;
+static const char *pf37Signal = "com.qqrush.pipfullscreen.pipstate";
+static void PF37Publish(BOOL active) {
+    uint64_t value = active ? 1 : 0;
+    int token = 0;
+    if (notify_register_check(pf37Signal, &token) == NOTIFY_STATUS_OK) {
+        notify_set_state(token, value);
+        notify_post(pf37Signal);
+        notify_cancel(token);
+    }
+}
+%group PF37AppDiagnostics
+%hook UIApplicationSceneClientSettings
+- (BOOL)statusBarHidden {
+    BOOL original = %orig;
+    static NSUInteger calls=0;
+    if (++calls<=30 || pf37AppPiPActive)
+        PF37Log([NSString stringWithFormat:@"app statusBarHidden call=%lu original=%d pip=%d", (unsigned long)calls,original,pf37AppPiPActive]);
+    return original;
+}
+%end
+%hook UIStatusBarStyleAttributes
+- (double)foregroundAlpha {
+    double original = %orig;
+    static NSUInteger calls=0;
+    if (++calls<=30 || pf37AppPiPActive)
+        PF37Log([NSString stringWithFormat:@"app foregroundAlpha call=%lu original=%.3f pip=%d",(unsigned long)calls,original,pf37AppPiPActive]);
+    return original;
+}
+%end
+%end
+
 // v0.33: arm scene status before PiP presentation and fullscreen sizing.
 static __weak SBPIPContainerViewController *pf33PendingPiP = nil;
 static BOOL PF33StatusArmed(void) {
@@ -255,6 +307,7 @@ static BOOL PF33StatusArmed(void) {
         [controller forcePictureInPictureToFrame:screen];
         PFWrite([NSString stringWithFormat:@"v0.7 resulting view frame %@", NSStringFromCGRect(controller.view.frame)]);
         pfActivePiP = controller;
+        PF37Publish(YES);
         PFWrite(@"v0.34 fullscreen active: scene settings + foreground alpha armed");
         PFInspectWindows();
         PFDumpMethods([controller class], @"PiPContainer");
@@ -269,6 +322,7 @@ static BOOL PF33StatusArmed(void) {
     if (pf33PendingPiP == self) pf33PendingPiP = nil;
     if (pfActivePiP == self) {
         pfActivePiP = nil;
+        PF37Publish(NO);
         PFWrite(@"v0.34 fullscreen ended: hooks disarmed");
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
@@ -301,6 +355,16 @@ static BOOL PF33StatusArmed(void) {
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
+            PF37Log(@"v0.37 Hongguo constructor; diagnostics initializing");
+            %init(PF37AppDiagnostics);
+            static int pf37NotifyToken=0;
+            int pf37Result=notify_register_dispatch(pf37Signal,&pf37NotifyToken,dispatch_get_main_queue(),^(int token) {
+                uint64_t value=0;
+                int result=notify_get_state(token,&value);
+                pf37AppPiPActive=(result==NOTIFY_STATUS_OK && value==1);
+                PF37Log([NSString stringWithFormat:@"Darwin signal received result=%d active=%d",result,pf37AppPiPActive]);
+            });
+            PF37Log([NSString stringWithFormat:@"Darwin listener result=%d token=%d",pf37Result,pf37NotifyToken]);
             NSString *probe = [NSTemporaryDirectory() stringByAppendingPathComponent:@"pipfullscreen-v036-loaded.txt"];
             NSString *payload = [NSString stringWithFormat:@"v0.36 Hongguo injected pid=%d bundle=%@\\n", getpid(), [NSBundle mainBundle].bundleIdentifier];
             BOOL wrote = [payload writeToFile:probe atomically:YES encoding:NSUTF8StringEncoding error:nil];
