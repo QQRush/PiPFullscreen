@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
 #import <stdio.h>
+#import <unistd.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -295,11 +296,17 @@ static BOOL PF33StatusArmed(void) {
 %ctor {
     @autoreleasepool {
         if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
-            PFWrite(@"PiPFullscreen v0.12 corrected Home selectors loaded");
+            PFWrite(@"v0.35 SPRINGBOARD ctor reached");
             PFHomeDiagnostics();
             PFDumpMethods(NSClassFromString(@"SBHomeHardwareButtonActions"), @"HomeActions");
             %init;
         } else if ([[NSBundle mainBundle].bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
+            PFWrite(@"v0.35 HONGGUO ctor reached");
+            NSLog(@"[PiPFullscreen v0.35] HONGGUO ctor reached pid=%d", getpid());
+            PFWrite([NSString stringWithFormat:@"v0.35 HONGGUO classes sceneSettings=%d foregroundStyle=%d foregroundView=%d",
+                NSClassFromString(@"UIApplicationSceneClientSettings") != Nil,
+                NSClassFromString(@"UIStatusBarStyleAttributes") != Nil,
+                NSClassFromString(@"_UIStatusBarForegroundView") != Nil]);
             PFWrite(@"v0.29 HONGGUO diagnostics loaded");
             NSNotificationCenter *nc=[NSNotificationCenter defaultCenter];
             [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
