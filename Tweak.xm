@@ -359,7 +359,34 @@ static void PF38Refresh(void) {
 %end
 
 // v0.33: arm scene status before PiP presentation and fullscreen sizing.
-static __weak SBPIPContainerViewController *pf33PendingPiP = nil;
+static __weak SBPIPContainerViewController *pf33PendingPiP = nil;\n// v0.41: conditional HideBar foreground-view experiment; restore on PiP exit.
+static NSMapTable<UIView *, NSNumber *> *pf41OriginalHidden;
+static void PF41Foreground(UIView *view, BOOL active) {
+    if (!view) return;
+    if (!pf41OriginalHidden) pf41OriginalHidden = [NSMapTable weakToStrongObjectsMapTable];
+    NSNumber *saved = [pf41OriginalHidden objectForKey:view];
+    if (active) {
+        if (!saved) [pf41OriginalHidden setObject:@(view.hidden) forKey:view];
+        view.hidden = YES;
+    } else if (saved) {
+        view.hidden = saved.boolValue;
+        [pf41OriginalHidden removeObjectForKey:view];
+    }
+}
+static void PF41Restore(void) {
+    for (UIView *view in pf41OriginalHidden.keyEnumerator.allObjects) PF41Foreground(view, NO);
+    PFWrite(@"v0.41 foreground views restored");
+}
+%hook _UIStatusBarForegroundView
+- (void)layoutSubviews {
+    %orig;
+    BOOL active = pf33PendingPiP != nil || pfActivePiP != nil;
+    PF41Foreground((UIView *)self, active);
+    if (active) PFWrite(@"v0.41 foreground view hidden");
+}
+%end
+
+
 static BOOL PF33StatusArmed(void) {
     return pf33PendingPiP != nil || pfActivePiP != nil;
 }
