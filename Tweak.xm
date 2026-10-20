@@ -294,6 +294,7 @@ static BOOL PFReturnToApp(void) {
     if (pfRestoreInProgress) return YES;
     pfRestoreInProgress = YES;
     PF23StatusBar(NO);
+    PF27Apply(NO);
     PFWrite(@"v0.18 Home restore initiated");
     PF20Trace(@"HOME_RESTORE");
     PF22Inspect(@"HOME_RESTORE");
@@ -478,6 +479,55 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(500*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PF19AppSnapshot([phase stringByAppendingString:@"_500ms"]); });
 }
 
+
+@interface _UIStatusBarForegroundView : UIView
+@end
+static NSMapTable<UIView *, NSNumber *> *pf27OriginalHidden;
+static void PF27Apply(BOOL hide) {
+    if (!pf27OriginalHidden) pf27OriginalHidden=[NSMapTable weakToStrongObjectsMapTable];
+    if (!hide) {
+        NSArray *views=[[pf27OriginalHidden keyEnumerator] allObjects];
+        for (UIView *v in views) {
+            NSNumber *original=[pf27OriginalHidden objectForKey:v];
+            if (original) v.hidden=original.boolValue;
+        }
+        [pf27OriginalHidden removeAllObjects];
+        PFWrite(@"v0.27 RESTORE foreground views");
+        return;
+    }
+    NSUInteger count=0;
+    Class target=NSClassFromString(@"_UIStatusBarForegroundView");
+    if (!target) { PFWrite(@"v0.27 foreground class unavailable"); return; }
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
+            NSUInteger budget=4000;
+            while (stack.count && budget--) {
+                UIView *v=stack.lastObject; [stack removeLastObject];
+                if ([v isKindOfClass:target]) {
+                    if (![pf27OriginalHidden objectForKey:v]) [pf27OriginalHidden setObject:@(v.hidden) forKey:v];
+                    v.hidden=YES;
+                    count++;
+                    PFWrite([NSString stringWithFormat:@"v0.27 HIDE foreground window=%@ windowHidden=%d",NSStringFromClass([w class]),w.hidden]);
+                } else [stack addObjectsFromArray:v.subviews];
+            }
+        }
+    }
+    PFWrite([NSString stringWithFormat:@"v0.27 APPLY found=%lu",(unsigned long)count]);
+}
+%hook _UIStatusBarForegroundView
+- (void)didMoveToWindow {
+    %orig;
+    if (pfActivePiP && !pfRestoreInProgress && self.window) {
+        if (!pf27OriginalHidden) pf27OriginalHidden=[NSMapTable weakToStrongObjectsMapTable];
+        if (![pf27OriginalHidden objectForKey:self]) [pf27OriginalHidden setObject:@(self.hidden) forKey:self];
+        self.hidden=YES;
+        PFWrite(@"v0.27 HOOK foreground didMoveToWindow hidden");
+    }
+}
+%end
+
 %hook SBPIPContainerViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -500,8 +550,9 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PF20Trace(@"PIP_FULLSCREEN");
         PF22Inspect(@"PIP_FULLSCREEN");
         PF26VisibleStatusScan();
+        PF27Apply(YES);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ if (pfActivePiP==controller) PF26VisibleStatusScan(); });
-        for (NSUInteger n=0;n<8;n++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(n*250*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PFWrite([NSString stringWithFormat:@"v0.25 TICK %lu active=%d restoring=%d window=%d",(unsigned long)n,pfActivePiP==controller,pfRestoreInProgress,controller.view.window!=nil]); if (controller.view.window && !pfRestoreInProgress) PF23StatusBar(YES); });
+        for (NSUInteger n=0;n<8;n++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(n*250*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PFWrite([NSString stringWithFormat:@"v0.25 TICK %lu active=%d restoring=%d window=%d",(unsigned long)n,pfActivePiP==controller,pfRestoreInProgress,controller.view.window!=nil]); if (controller.view.window && !pfRestoreInProgress) { PF23StatusBar(YES); PF27Apply(YES); } });
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
@@ -514,6 +565,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PF18Snapshot(@"PIP_WILL_DISAPPEAR");
         PF20Trace(@"PIP_DISAPPEAR");
         PF23StatusBar(NO);
+        PF27Apply(NO);
         pfActivePiP = nil;
         pfRestoreInProgress = NO;
         PFWrite(@"v0.12 PiP disappearing");
