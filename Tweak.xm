@@ -224,10 +224,13 @@ static void PF23StatusBar(BOOL hide) {
         PFWrite(@"v0.23 RESTORE status bar");
         return;
     }
+    PFWrite(@"v0.24 SEARCH starting");
+    NSUInteger windows=0,found=0;
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]]) continue;
         for (UIWindow *w in ((UIWindowScene *)scene).windows) {
-            if (![NSStringFromClass([w class]) isEqualToString:@"SBMainSwitcherWindow"]) continue;
+            windows++;
+            if (![NSStringFromClass([w class]) containsString:@"SwitcherWindow"]) continue;
             NSMutableArray *stack=[NSMutableArray arrayWithObject:w];
             NSUInteger budget=2500;
             while (stack.count && budget--) {
@@ -235,7 +238,8 @@ static void PF23StatusBar(BOOL hide) {
                 if ([NSStringFromClass([v class]) isEqualToString:@"UIStatusBar_Modern"]) {
                     if (![pf23SavedHidden objectForKey:v]) [pf23SavedHidden setObject:@(v.hidden) forKey:v];
                     v.hidden=YES;
-                    PFWrite([NSString stringWithFormat:@"v0.23 HIDE %@ window=%@",NSStringFromClass([v class]),NSStringFromClass([w class])]);
+                    found++;
+                    PFWrite([NSString stringWithFormat:@"v0.24 HIDE %@ window=%@",NSStringFromClass([v class]),NSStringFromClass([w class])]);
                     continue;
                 }
                 [stack addObjectsFromArray:v.subviews];
@@ -466,7 +470,7 @@ static void PF19ScheduleAppSnapshot(NSString *phase) {
         PF18ScheduleSnapshots();
         PF20Trace(@"PIP_FULLSCREEN");
         PF22Inspect(@"PIP_FULLSCREEN");
-        for (NSUInteger n=0;n<8;n++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(n*250*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ if (pfActivePiP==controller && !pfRestoreInProgress) PF23StatusBar(YES); });
+        for (NSUInteger n=0;n<8;n++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(n*250*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{ PFWrite([NSString stringWithFormat:@"v0.24 TICK %lu active=%d restoring=%d window=%d",(unsigned long)n,pfActivePiP==controller,pfRestoreInProgress,controller.view.window!=nil]); if (controller.view.window && !pfRestoreInProgress) PF23StatusBar(YES); });
         PFStatusTrace(@"PIP_FULL");
         PFInspectPiPOverlay(controller.view, 0);
     });
