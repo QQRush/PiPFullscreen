@@ -1,5 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
+#import <AVFoundation/AVFoundation.h>
+#import <notify.h>
+#import <objc/runtime.h>
 
 @interface SBPIPContainerViewController : UIViewController
 - (void)forcePictureInPictureToFrame:(CGRect)frame;
@@ -10,6 +13,7 @@ static __weak SBPIPContainerViewController *pfActivePiP = nil;
 static __weak SBPIPContainerViewController *pfPendingPiP = nil;
 static BOOL pfRestoreInProgress = NO;
 static NSMapTable<UIView *, NSNumber *> *pfOriginalHidden;
+static const void *PF2xRecognizerKey = &PF2xRecognizerKey;
 
 static BOOL PFStatusArmed(void) {
     return pfPendingPiP != nil || pfActivePiP != nil;
@@ -56,6 +60,35 @@ static void PFRefreshStatusForeground(BOOL hide) {
             [stack addObjectsFromArray:view.subviews];
         }
     }
+}
+
+
+@interface PFPiPTapDelegate : NSObject <UIGestureRecognizerDelegate>
+- (void)pf_handleTap:(UITapGestureRecognizer *)recognizer;
+@end
+@implementation PFPiPTapDelegate
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
+ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    return YES;
+}
+- (void)pf_handleTap:(UITapGestureRecognizer *)recognizer {
+    notify_post("com.qqrush.pipfullscreen.set2x");
+}
+@end
+static PFPiPTapDelegate *pfTapDelegate = nil;
+
+static void PFInstall2xTap(SBPIPContainerViewController *controller) {
+    if (!controller || !controller.isViewLoaded) return;
+    if (objc_getAssociatedObject(controller.view, PF2xRecognizerKey)) return;
+    if (!pfTapDelegate) pfTapDelegate = [PFPiPTapDelegate new];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
+        initWithTarget:pfTapDelegate action:@selector(pf_handleTap:)];
+    tap.delegate = pfTapDelegate;
+    tap.cancelsTouchesInView = NO;
+    tap.delaysTouchesBegan = NO;
+    tap.delaysTouchesEnded = NO;
+    objc_setAssociatedObject(controller.view, PF2xRecognizerKey, tap, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [controller.view addGestureRecognizer:tap];
 }
 
 static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
@@ -116,6 +149,7 @@ static BOOL PFReturnToApp(void) {
         [controller forcePictureInPictureToFrame:[UIScreen mainScreen].bounds];
         pfActivePiP = controller;
         PFRefreshStatusForeground(YES);
+        PFInstall2xTap(controller);
     });
 }
 - (void)viewWillDisappear:(BOOL)animated {
@@ -141,9 +175,49 @@ static BOOL PFReturnToApp(void) {
 }
 %end
 
+
+%group VideoAppHooks
+static NSHashTable<AVPlayer *> *pfPlayers = nil;
+
+static void PFSetTrackedPlayers2x(void) {
+    if (!pfPlayers) return;
+    for (AVPlayer *player in pfPlayers.allObjects) {
+        if (player.currentItem && player.currentItem.status == AVPlayerItemStatusReadyToPlay)
+            [player setRate:2.0f];
+    }
+}
+
+%hook AVPlayer
+- (void)play {
+    if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
+    [pfPlayers addObject:self];
+    %orig;
+}
+- (void)setRate:(float)rate {
+    if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
+    [pfPlayers addObject:self];
+    %orig;
+}
+- (void)playImmediatelyAtRate:(float)rate {
+    if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
+    [pfPlayers addObject:self];
+    %orig;
+}
+%end
+%end // VideoAppHooks
+
 %ctor {
     @autoreleasepool {
-        if ([NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"])
+        NSString *process = NSProcessInfo.processInfo.processName;
+        if ([process isEqualToString:@"SpringBoard"]) {
             %init;
+        } else if ([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
+            %init(VideoAppHooks);
+            if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
+            static int token = 0;
+            notify_register_dispatch("com.qqrush.pipfullscreen.set2x", &token, dispatch_get_main_queue(), ^(int t) {
+                PFSetTrackedPlayers2x();
+            });
+        }
     }
 }
