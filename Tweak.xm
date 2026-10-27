@@ -3,6 +3,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <notify.h>
 #import <objc/runtime.h>
+#import <os/log.h>
 
 @interface SBPIPContainerViewController : UIViewController
 - (void)forcePictureInPictureToFrame:(CGRect)frame;
@@ -14,6 +15,8 @@ static __weak SBPIPContainerViewController *pfPendingPiP = nil;
 static BOOL pfRestoreInProgress = NO;
 static NSMapTable<UIView *, NSNumber *> *pfOriginalHidden;
 static const void *PF2xRecognizerKey = &PF2xRecognizerKey;
+static os_log_t pfLog;
+static void PFLog(NSString *message) { if (pfLog) os_log_with_type(pfLog, OS_LOG_TYPE_DEFAULT, "%{public}@", message); }
 
 static BOOL PFStatusArmed(void) {
     return pfPendingPiP != nil || pfActivePiP != nil;
@@ -72,14 +75,15 @@ static void PFRefreshStatusForeground(BOOL hide) {
     return YES;
 }
 - (void)pf_handleTap:(UITapGestureRecognizer *)recognizer {
+    PFLog([NSString stringWithFormat:@"PiP tap received; state=%ld", (long)recognizer.state]);
     notify_post("com.qqrush.pipfullscreen.set2x");
 }
 @end
 static PFPiPTapDelegate *pfTapDelegate = nil;
 
 static void PFInstall2xTap(SBPIPContainerViewController *controller) {
-    if (!controller || !controller.isViewLoaded) return;
-    if (objc_getAssociatedObject(controller.view, PF2xRecognizerKey)) return;
+    if (!controller || !controller.isViewLoaded) { PFLog(@"PiP tap install skipped: controller/view unavailable"); return; }
+    if (objc_getAssociatedObject(controller.view, PF2xRecognizerKey)) { PFLog(@"PiP tap recognizer already installed"); return; }
     if (!pfTapDelegate) pfTapDelegate = [PFPiPTapDelegate new];
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc]
         initWithTarget:pfTapDelegate action:@selector(pf_handleTap:)];
@@ -89,6 +93,7 @@ static void PFInstall2xTap(SBPIPContainerViewController *controller) {
     tap.delaysTouchesEnded = NO;
     objc_setAssociatedObject(controller.view, PF2xRecognizerKey, tap, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [controller.view addGestureRecognizer:tap];
+    PFLog(@"PiP tap recognizer installed");
 }
 
 static UIControl *PFRestoreButton(UIView *view, NSUInteger depth) {
@@ -180,27 +185,39 @@ static BOOL PFReturnToApp(void) {
 static NSHashTable<AVPlayer *> *pfPlayers = nil;
 
 static void PFSetTrackedPlayers2x(void) {
-    if (!pfPlayers) return;
-    for (AVPlayer *player in pfPlayers.allObjects) {
-        if (player.currentItem && player.currentItem.status == AVPlayerItemStatusReadyToPlay)
+    NSArray<AVPlayer *> *players = pfPlayers.allObjects;
+    PFLog([NSString stringWithFormat:@"2x request received in Hongguo; tracked AVPlayers=%lu", (unsigned long)players.count]);
+    if (!players.count) { PFLog(@"2x failed: no AVPlayer instances tracked"); return; }
+    NSUInteger ready = 0;
+    for (AVPlayer *player in players) {
+        AVPlayerItem *item = player.currentItem;
+        PFLog([NSString stringWithFormat:@"AVPlayer=%p rate=%.2f status=%ld item=%@", player, player.rate, (long)item.status, item ? @"yes" : @"no"]);
+        if (item && item.status == AVPlayerItemStatusReadyToPlay) {
+            ready++;
             [player setRate:2.0f];
+            PFLog([NSString stringWithFormat:@"AVPlayer=%p rate after setRate=%.2f", player, player.rate]);
+        }
     }
+    PFLog([NSString stringWithFormat:@"2x request complete; ready players=%lu", (unsigned long)ready]);
 }
 
 %hook AVPlayer
 - (void)play {
     if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
     [pfPlayers addObject:self];
+    PFLog([NSString stringWithFormat:@"AVPlayer play intercepted: %p", self]);
     %orig;
 }
 - (void)setRate:(float)rate {
     if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
     [pfPlayers addObject:self];
+    PFLog([NSString stringWithFormat:@"AVPlayer setRate intercepted: %p rate=%.2f", self, rate]);
     %orig;
 }
 - (void)playImmediatelyAtRate:(float)rate {
     if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
     [pfPlayers addObject:self];
+    PFLog([NSString stringWithFormat:@"AVPlayer playImmediatelyAtRate intercepted: %p rate=%.2f", self, rate]);
     %orig;
 }
 %end
@@ -209,15 +226,19 @@ static void PFSetTrackedPlayers2x(void) {
 %ctor {
     @autoreleasepool {
         NSString *process = NSProcessInfo.processInfo.processName;
+        pfLog = os_log_create("com.qqrush.pipfullscreen", "2xdiagnostic");
+        PFLog([NSString stringWithFormat:@"Tweak loaded in process=%@ bundle=%@", process, NSBundle.mainBundle.bundleIdentifier ?: @"(none)"]);
         if ([process isEqualToString:@"SpringBoard"]) {
             %init;
         } else if ([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.phoenix.video"]) {
             %init(VideoAppHooks);
             if (!pfPlayers) pfPlayers = [NSHashTable weakObjectsHashTable];
             static int token = 0;
-            notify_register_dispatch("com.qqrush.pipfullscreen.set2x", &token, dispatch_get_main_queue(), ^(int t) {
+            uint32_t status = notify_register_dispatch("com.qqrush.pipfullscreen.set2x", &token, dispatch_get_main_queue(), ^(int t) {
+                PFLog(@"SpringBoard notification received in Hongguo");
                 PFSetTrackedPlayers2x();
             });
+            PFLog([NSString stringWithFormat:@"2x notification observer registered; status=%u", status]);
         }
     }
 }
