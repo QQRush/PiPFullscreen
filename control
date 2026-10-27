@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
-Name: PiP Fullscreen Foreground Test
-Version: 0.46.0
+Name: PiP Fullscreen 2x Tap
+Version: 0.47.0
 Architecture: iphoneos-arm64
-Description: Experimental foreground-only immediate status-bar hide and restore.
+Description: Tap anywhere on fullscreen PiP to request 2x playback in Hongguo.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
