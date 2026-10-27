@@ -1,8 +1,8 @@
 Package: com.qqrush.pipfullscreen
-Name: PiP Fullscreen 2x Tap
-Version: 0.47.0
+Name: PiP Fullscreen 2x Diagnostics
+Version: 0.48.0
 Architecture: iphoneos-arm64
-Description: Tap anywhere on fullscreen PiP to request 2x playback in Hongguo.
+Description: Diagnostic logging for fullscreen PiP 2x playback.
 Maintainer: QQRush
 Author: QQRush
 Section: Tweaks
